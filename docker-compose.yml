@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  stock-analyzer:
+    build: .
+    container_name: stock-sense-ai
+    volumes:
+      # Mount data directory for persistence
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # Mount config file if it exists
+      - ./config.encrypted:/app/config.encrypted:ro
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    # Remove the default CMD to allow interactive usage
+    entrypoint: ["node", "dist/index.js"]
+    
+  # Optional: For future features like web dashboard
+  # stock-analyzer-web:
+  #   build: 
+  #     context: .
+  #     dockerfile: Dockerfile.web
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - stock-analyzer
+  #   environment:
+  #     - NODE_ENV=production

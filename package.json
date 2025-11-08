@@ -1,0 +1,63 @@
+{
+  "name": "stock-sense-ai",
+  "version": "1.0.0",
+  "description": "Secure local stock analysis CLI with advanced trading strategies",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "stock-analyzer": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write src/",
+    "format": "biome format --write src/",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "clean": "rm -rf dist",
+    "prepare": "pnpm build"
+  },
+  "keywords": [
+    "stock-analysis",
+    "trading",
+    "cli",
+    "security",
+    "technical-analysis",
+    "mean-reversion",
+    "momentum",
+    "risk-management"
+  ],
+  "author": "Stock Sense AI",
+  "license": "MIT",
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.0",
+    "axios": "^1.6.2",
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.3",
+    "commander": "^11.1.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "inquirer": "^9.2.12",
+    "keytar": "^7.9.0",
+    "ora": "^7.0.1",
+    "socket.io": "^4.7.4",
+    "technicalindicators": "^3.1.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.4.1",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.10.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "pnpm@8.15.0"
+}
