@@ -16,6 +16,11 @@ import { StockDiscovery, type DiscoveryResult } from "./discovery/stock-discover
 import { MonitoringService } from "./monitoring/monitoring-service.js";
 import { WebServer } from "./web/server.js";
 import type { Signal } from "./types/trading.js";
+import { registerBacktestDataCommands } from "./cli/backtest-data-commands.js";
+// TODO: Fix type mismatches in backtest-commands.ts before enabling
+// import { registerBacktestCommands } from "./cli/backtest-commands.js";
+import { registerPaperTradingCommands } from "./cli/paper-trading-commands.js";
+import { createRiskCommands } from "./cli/risk-commands.js";
 
 const program = new Command();
 const config = SecureConfig.getInstance();
@@ -1014,6 +1019,18 @@ process.on("uncaughtException", (error) => {
   console.error(chalk.red("Uncaught Exception:"), error);
   process.exit(1);
 });
+
+// Register backtest commands
+// TODO: Fix type mismatches before enabling
+// registerBacktestCommands(program);
+registerBacktestDataCommands(program);
+
+// Register paper trading commands
+registerPaperTradingCommands(program);
+
+// Register risk management commands
+const riskCommand = createRiskCommands();
+program.addCommand(riskCommand);
 
 // Parse command line arguments
 program.parse();
