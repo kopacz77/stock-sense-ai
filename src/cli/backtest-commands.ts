@@ -24,18 +24,21 @@ import type { HistoricalData } from '../types/trading.js';
 class StrategyAdapter implements BacktestStrategy {
   constructor(
     private strategy: MeanReversionStrategy | MomentumStrategy,
-    private symbol: string
+    private strategyName: string
   ) {}
 
-  async onData(data: any): Promise<{ action: 'BUY' | 'SELL' | 'HOLD'; quantity?: number; reason?: string }> {
-    // This is a simplified adapter - in production you'd need more sophisticated conversion
-    const signal = await this.strategy.analyze(this.symbol, [data] as HistoricalData[]);
+  getName(): string {
+    return this.strategyName;
+  }
 
-    return {
-      action: signal.action,
-      quantity: signal.positionSize,
-      reason: signal.reasons[0],
-    };
+  async generateSignal(
+    symbol: string,
+    currentData: any,
+    historicalData: any[]
+  ): Promise<any> {
+    // This is a simplified adapter - in production you'd need more sophisticated conversion
+    const signal = await this.strategy.analyze(symbol, historicalData as HistoricalData[]);
+    return signal;
   }
 
   async initialize(): Promise<void> {
@@ -103,15 +106,14 @@ export function registerBacktestCommands(program: Command): void {
           });
         } else if (options.strategy === 'momentum') {
           strategy = new MomentumStrategy({
-            emaPeriod: 20,
-            rsiPeriod: 14,
-            macdFastPeriod: 12,
-            macdSlowPeriod: 26,
-            macdSignalPeriod: 9,
-            minTrendStrength: 60,
+            shortMA: 20,
+            longMA: 50,
+            macdFast: 12,
+            macdSlow: 26,
+            macdSignal: 9,
+            trendStrength: 0.02,
             minConfidence: 65,
-            volumeConfirmation: true,
-            maxHoldingPeriod: 60,
+            volumeThreshold: 1.5,
           });
         } else {
           throw new Error(`Unknown strategy: ${options.strategy}`);
@@ -120,15 +122,25 @@ export function registerBacktestCommands(program: Command): void {
         // Use SimpleBacktestEngine for now (simpler integration)
         spinner.text = 'Running backtest...';
 
+        const strategyAdapter = new StrategyAdapter(strategy, options.strategy);
         const backtestEngine = new SimpleBacktestEngine({
+          id: `backtest-${Date.now()}`,
+          name: `${symbol} ${options.strategy} backtest`,
+          symbols: [symbol],
           initialCapital: parseFloat(options.capital),
-          commission: new FixedCommissionModel(parseFloat(options.commission)),
-          slippage: new FixedBPSSlippageModel(parseFloat(options.slippage)),
+          commissionModel: new FixedCommissionModel(parseFloat(options.commission)),
+          slippageModel: new FixedBPSSlippageModel(parseFloat(options.slippage)),
           startDate: from,
           endDate: to,
-        });
+          commission: { type: 'FIXED', fixedFee: parseFloat(options.commission) },
+          slippage: { type: 'FIXED', fixedAmount: parseFloat(options.slippage) },
+          strategy: {
+            name: options.strategy,
+            parameters: {},
+          },
+        }, strategyAdapter);
 
-        const result = await backtestEngine.run(symbol, historicalData, strategy);
+        const result = await backtestEngine.run(symbol, historicalData as any);
 
         spinner.succeed('Backtest complete!');
 
@@ -185,15 +197,14 @@ export function registerBacktestCommands(program: Command): void {
           {
             name: 'Momentum',
             strategy: new MomentumStrategy({
-              emaPeriod: 20,
-              rsiPeriod: 14,
-              macdFastPeriod: 12,
-              macdSlowPeriod: 26,
-              macdSignalPeriod: 9,
-              minTrendStrength: 60,
+              shortMA: 20,
+              longMA: 50,
+              macdFast: 12,
+              macdSlow: 26,
+              macdSignal: 9,
+              trendStrength: 0.02,
               minConfidence: 65,
-              volumeConfirmation: true,
-              maxHoldingPeriod: 60,
+              volumeThreshold: 1.5,
             }),
           },
         ];
@@ -203,15 +214,25 @@ export function registerBacktestCommands(program: Command): void {
         for (const { name, strategy } of strategies) {
           spinner.text = `Running ${name} strategy...`;
 
+          const strategyAdapter = new StrategyAdapter(strategy, name);
           const backtestEngine = new SimpleBacktestEngine({
+            id: `backtest-${name}-${Date.now()}`,
+            name: `${symbol} ${name} comparison`,
+            symbols: [symbol],
             initialCapital: parseFloat(options.capital),
-            commission: new FixedCommissionModel(0),
-            slippage: new FixedBPSSlippageModel(5),
+            commissionModel: new FixedCommissionModel(0),
+            slippageModel: new FixedBPSSlippageModel(5),
             startDate: from,
             endDate: to,
-          });
+            commission: { type: 'FIXED', fixedFee: 0 },
+            slippage: { type: 'FIXED', fixedAmount: 5 },
+            strategy: {
+              name: name,
+              parameters: {},
+            },
+          }, strategyAdapter);
 
-          const result = await backtestEngine.run(symbol, historicalData, strategy);
+          const result = await backtestEngine.run(symbol, historicalData as any);
           results.push({ name, result });
         }
 
@@ -313,9 +334,9 @@ function displayComparisonResults(symbol: string, results: any[]): void {
 function getDefaultFromDate(): string {
   const date = new Date();
   date.setFullYear(date.getFullYear() - 1); // 1 year ago
-  return date.toISOString().split('T')[0];
+  return date.toISOString().split('T')[0] ?? '';
 }
 
 function getDefaultToDate(): string {
-  return new Date().toISOString().split('T')[0];
+  return new Date().toISOString().split('T')[0] ?? '';
 }

@@ -125,9 +125,8 @@ export class PerformanceCalculator {
    * Update value history
    */
   private updateValueHistory(portfolio: PortfolioState): void {
-    const previousValue = this.valueHistory.length > 0
-      ? this.valueHistory[this.valueHistory.length - 1].value
-      : portfolio.initialCapital;
+    const lastHistoryPoint = this.valueHistory[this.valueHistory.length - 1];
+    const previousValue = lastHistoryPoint?.value ?? portfolio.initialCapital;
 
     const returns = previousValue > 0
       ? ((portfolio.totalValue - previousValue) / previousValue) * 100

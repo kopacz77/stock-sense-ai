@@ -36,9 +36,10 @@ export class PerformanceMetricsCalculator {
     const tradingDays = this.calculateTradingDays(startDate, endDate);
     const years = tradingDays / 252; // Assuming 252 trading days per year
     const cagr = this.calculateCAGR(initialCapital, finalEquity, years);
+    const annualizedReturn = years > 0 ? (totalReturn / years) : totalReturn;
 
     // Calculate risk metrics
-    const dailyReturns = equityCurve.map((point) => point.returns);
+    const dailyReturns = equityCurve.map((point) => point.returns).filter((r): r is number => r !== undefined);
     const volatility = this.calculateVolatility(dailyReturns);
     const sharpeRatio = this.calculateSharpeRatio(dailyReturns, volatility);
     const sortinoRatio = this.calculateSortinoRatio(dailyReturns);
@@ -108,6 +109,7 @@ export class PerformanceMetricsCalculator {
       totalReturn,
       totalReturnDollar,
       cagr,
+      annualizedReturn,
 
       // Risk Metrics
       volatility,
@@ -141,16 +143,6 @@ export class PerformanceMetricsCalculator {
       avgHoldingPeriod,
       maxConsecutiveWins,
       maxConsecutiveLosses,
-
-      // Time-based
-      startDate,
-      endDate,
-      tradingDays,
-
-      // Cost Analysis
-      totalCommissions,
-      totalSlippage,
-      totalCosts: totalCommissions + totalSlippage,
     };
   }
 
@@ -231,18 +223,21 @@ export class PerformanceMetricsCalculator {
     for (const point of equityCurve) {
       if (point.equity > peak) {
         peak = point.equity;
-        peakDate = point.date;
+        peakDate = point.date ?? point.timestamp;
       }
 
+      const pointDate = point.date ?? point.timestamp;
       const drawdown = peak > 0 ? ((point.equity - peak) / peak) * 100 : 0;
-      const durationMs = point.date.getTime() - peakDate.getTime();
+      const durationMs = pointDate.getTime() - peakDate.getTime();
       const durationDays = Math.floor(durationMs / (1000 * 60 * 60 * 24));
 
       drawdowns.push({
-        date: point.date,
+        timestamp: pointDate,
+        date: pointDate,
         equity: point.equity,
         peak,
         drawdown,
+        drawdownPercent: drawdown,
         drawdownDuration: durationDays,
       });
     }
@@ -263,7 +258,7 @@ export class PerformanceMetricsCalculator {
    */
   private static getMaxDrawdownDuration(drawdowns: DrawdownPoint[]): number {
     if (drawdowns.length === 0) return 0;
-    return Math.max(...drawdowns.map((d) => d.drawdownDuration));
+    return Math.max(...drawdowns.map((d) => d.drawdownDuration ?? 0));
   }
 
   /**
@@ -312,6 +307,7 @@ export class PerformanceMetricsCalculator {
       totalReturn: 0,
       totalReturnDollar: 0,
       cagr: 0,
+      annualizedReturn: 0,
       volatility: 0,
       sharpeRatio: 0,
       sortinoRatio: 0,
@@ -335,12 +331,6 @@ export class PerformanceMetricsCalculator {
       avgHoldingPeriod: 0,
       maxConsecutiveWins: 0,
       maxConsecutiveLosses: 0,
-      startDate,
-      endDate,
-      tradingDays: 0,
-      totalCommissions: 0,
-      totalSlippage: 0,
-      totalCosts: 0,
     };
   }
 }

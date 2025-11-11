@@ -194,10 +194,10 @@ program
         ],
         [
           "Cache System",
-          health.cache ? chalk.green("✅ OK") : chalk.red("❌ FAIL"),
-          health.cache
-            ? `${cacheStats.totalFiles} files, ${(cacheStats.totalSize / 1024).toFixed(1)} KB`
-            : "Cache system not working",
+          cacheStats.legacyCache >= 0 ? chalk.green("✅ OK") : chalk.red("❌ FAIL"),
+          cacheStats.enhancedCache
+            ? `${cacheStats.enhancedCache.historicalCount ?? 0} datasets`
+            : `${cacheStats.legacyCache} cache entries`,
         ],
       );
 
@@ -455,10 +455,14 @@ program
     } else if (options.stats) {
       const stats = await marketData.getCacheStats();
       console.log(chalk.blue("📊 Cache Statistics:\\n"));
-      console.log(`Total files: ${stats.totalFiles}`);
-      console.log(`Total size: ${(stats.totalSize / 1024).toFixed(1)} KB`);
-      console.log(`Oldest entry: ${stats.oldestEntry?.toLocaleString() || "N/A"}`);
-      console.log(`Newest entry: ${stats.newestEntry?.toLocaleString() || "N/A"}`);
+      if (stats.enhancedCache) {
+        console.log(`Total symbols: ${stats.enhancedCache.symbols ?? 0}`);
+        console.log(`Total size: ${stats.enhancedCache.totalSize?.toFixed(2) ?? 0} MB`);
+        console.log(`Historical datasets: ${stats.enhancedCache.historicalCount ?? 0}`);
+        console.log(`Quote cache count: ${stats.enhancedCache.quotesCount ?? 0}`);
+      } else {
+        console.log(`Legacy cache entries: ${stats.legacyCache}`);
+      }
     } else {
       console.log(chalk.yellow("Use --clear to clear cache or --stats to show statistics"));
     }

@@ -30,9 +30,9 @@ export class SimpleBacktestEngine {
     this.strategy = strategy;
     this.portfolio = new PortfolioTracker(config.initialCapital, config.startDate);
     this.fillSimulator = new FillSimulator({
-      slippageModel: config.slippageModel,
-      commissionModel: config.commissionModel,
-      fillOnClose: config.fillOnClose,
+      slippageModel: config.slippageModel!,
+      commissionModel: config.commissionModel!,
+      fillOnClose: config.fillOnClose ?? true,
       rejectPartialFills: true,
       maxOrderSizePercent: 0.1, // Max 10% of daily volume
     });
@@ -45,7 +45,9 @@ export class SimpleBacktestEngine {
    */
   async run(symbol: string, bars: Bar[]): Promise<BacktestResult> {
     // Initialize strategy
-    this.strategy.initialize?.(this.config);
+    if (this.strategy.initialize) {
+      await this.strategy.initialize();
+    }
 
     // Filter bars to date range
     const filteredBars = this.dataManager.filterByDateRange(
@@ -72,7 +74,7 @@ export class SimpleBacktestEngine {
       this.portfolio.updatePositionPrices(priceMap, bar.timestamp);
 
       // Generate signal from strategy
-      const signal = this.strategy.onBar(bar, this.portfolio.getSnapshot());
+      const signal = this.strategy.onBar ? await this.strategy.onBar(bar.symbol, bar, [bar]) : null;
 
       // Process signal if generated
       if (signal && signal.action !== "HOLD") {
@@ -119,20 +121,37 @@ export class SimpleBacktestEngine {
 
     const result: BacktestResult = {
       config: this.config,
+      timestamp: new Date(),
+      executionTimeMs: 0,
       metrics,
       trades,
       equityCurve,
       drawdownCurve: drawdowns,
       portfolioSnapshots: [this.portfolio.getSnapshot()],
-      dailyReturns: equityCurve.map((point) => ({
-        date: point.date,
-        returns: point.returns,
-        cumulativeReturns: point.cumulativeReturns,
-      })),
+      dailyReturns: equityCurve
+        .map((point) => point.returns)
+        .filter((r): r is number => r !== undefined),
+      errors: [],
+      statistics: {
+        tradingDays: filteredBars.length,
+        avgDailyReturn: 0,
+        dailyReturnStdDev: 0,
+        bestDay: 0,
+        worstDay: 0,
+        positiveDays: 0,
+        negativeDays: 0,
+        totalCommission: costs.commissions,
+        totalSlippage: costs.slippage,
+        avgWinDuration: 0,
+        avgLossDuration: 0,
+        maxConsecutiveWins: metrics.maxConsecutiveWins ?? 0,
+        maxConsecutiveLosses: metrics.maxConsecutiveLosses ?? 0,
+        avgTradesPerMonth: 0,
+      },
     };
 
     // Finalize strategy
-    this.strategy.finalize?.(result);
+    this.strategy.finalize?.();
 
     return result;
   }
@@ -165,8 +184,7 @@ export class SimpleBacktestEngine {
         side: "BUY",
         quantity,
         timeInForce: "DAY",
-        timestamp: bar.timestamp,
-        status: "PENDING",
+        createdAt: bar.timestamp,
         strategyName: this.strategy.name,
       };
     }
@@ -185,8 +203,7 @@ export class SimpleBacktestEngine {
         side: "SELL",
         quantity: position.quantity,
         timeInForce: "DAY",
-        timestamp: bar.timestamp,
-        status: "PENDING",
+        createdAt: bar.timestamp,
         strategyName: this.strategy.name,
       };
     }

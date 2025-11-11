@@ -385,7 +385,8 @@ export class RandomSearchOptimizer {
         parameterName: paramName,
         correlation: Math.abs(correlation),
         bestValue,
-        valueRange: [...new Set(results.map((r) => r.parameters.parameters[paramName]))],
+        valueRange: [...new Set(results.map((r) => r.parameters.parameters[paramName]))]
+          .filter((v): v is string | number | boolean => v !== undefined),
         valuePerformance: [], // Not applicable for random search
       });
     }

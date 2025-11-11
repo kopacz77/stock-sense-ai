@@ -69,19 +69,19 @@ export class CVaRCalculator {
     const cvar95Return =
       tailReturns95.length > 0
         ? tailReturns95.reduce((sum, r) => sum + r, 0) / tailReturns95.length
-        : sortedReturns[0];
+        : (sortedReturns[0] ?? 0);
 
     const cvar99Return =
       tailReturns99.length > 0
         ? tailReturns99.reduce((sum, r) => sum + r, 0) / tailReturns99.length
-        : sortedReturns[0];
+        : (sortedReturns[0] ?? 0);
 
     const cvar95 = Math.abs(portfolioValue * cvar95Return);
     const cvar99 = Math.abs(portfolioValue * cvar99Return);
 
     // Calculate VaR for comparison
-    const var95 = Math.abs(portfolioValue * sortedReturns[varIndex95]);
-    const var99 = Math.abs(portfolioValue * sortedReturns[varIndex99]);
+    const var95 = Math.abs(portfolioValue * (sortedReturns[varIndex95] ?? 0));
+    const var99 = Math.abs(portfolioValue * (sortedReturns[varIndex99] ?? 0));
 
     // Tail risk ratio: CVaR / VaR (higher = fatter tails = more dangerous)
     const tailRiskRatio95 = var95 > 0 ? cvar95 / var95 : 1.0;
@@ -212,19 +212,19 @@ export class CVaRCalculator {
     const cvar95Return =
       tailReturns95.length > 0
         ? tailReturns95.reduce((sum, r) => sum + r, 0) / tailReturns95.length
-        : sortedReturns[0];
+        : (sortedReturns[0] ?? 0);
 
     const cvar99Return =
       tailReturns99.length > 0
         ? tailReturns99.reduce((sum, r) => sum + r, 0) / tailReturns99.length
-        : sortedReturns[0];
+        : (sortedReturns[0] ?? 0);
 
     const cvar95 = Math.abs(portfolioValue * cvar95Return);
     const cvar99 = Math.abs(portfolioValue * cvar99Return);
 
     // Calculate VaR for tail risk ratio
-    const var95 = Math.abs(portfolioValue * sortedReturns[varIndex95]);
-    const var99 = Math.abs(portfolioValue * sortedReturns[varIndex99]);
+    const var95 = Math.abs(portfolioValue * (sortedReturns[varIndex95] ?? 0));
+    const var99 = Math.abs(portfolioValue * (sortedReturns[varIndex99] ?? 0));
 
     const tailRiskRatio95 = var95 > 0 ? cvar95 / var95 : 1.0;
     const tailRiskRatio99 = var99 > 0 ? cvar99 / var99 : 1.0;
@@ -272,7 +272,7 @@ export class CVaRCalculator {
         const returns = historicalReturns.get(position.symbol);
         if (returns && returns[day] !== undefined) {
           const weight = position.value / totalValue;
-          dayReturn += weight * returns[day];
+          dayReturn += weight * (returns[day] ?? 0);
         }
       }
 

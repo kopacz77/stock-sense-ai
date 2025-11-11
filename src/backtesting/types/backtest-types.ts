@@ -26,6 +26,10 @@ export interface HistoricalDataPoint {
   volume: number;
   /** Adjusted close price (for splits/dividends) */
   adjustedClose?: number;
+  /** Stock split coefficient */
+  splitCoefficient?: number;
+  /** Dividend amount */
+  dividendAmount?: number;
 }
 
 /**
@@ -78,6 +82,12 @@ export interface BacktestConfig {
     /** Volume impact factor (if type is VOLUME_BASED) */
     volumeImpact?: number;
   };
+  /** Slippage model instance (alternative to config) */
+  slippageModel?: SlippageModel;
+  /** Commission model instance (alternative to config) */
+  commissionModel?: CommissionModel;
+  /** Fill orders on bar close (true) or next bar open (false) */
+  fillOnClose?: boolean;
   /** Risk management parameters */
   riskManagement?: {
     /** Maximum risk per trade (as decimal, e.g., 0.01 = 1%) */
@@ -114,6 +124,10 @@ export interface BacktestResult {
   metrics: PerformanceMetrics;
   /** Equity curve data */
   equityCurve: EquityCurvePoint[];
+  /** Drawdown curve data */
+  drawdownCurve?: DrawdownPoint[];
+  /** Daily returns for analysis */
+  dailyReturns?: number[];
   /** All trades executed during the backtest */
   trades: Trade[];
   /** Daily portfolio snapshots */
@@ -130,6 +144,10 @@ export interface BacktestResult {
 export interface PerformanceMetrics {
   /** Total return (decimal, e.g., 0.15 = 15%) */
   totalReturn: number;
+  /** Total return in dollars */
+  totalReturnDollar: number;
+  /** Compound Annual Growth Rate (decimal) */
+  cagr: number;
   /** Annualized return */
   annualizedReturn: number;
   /** Sharpe ratio (risk-adjusted return) */
@@ -154,14 +172,28 @@ export interface PerformanceMetrics {
   avgWin: number;
   /** Average losing trade amount */
   avgLoss: number;
+  /** Average winning trade percentage */
+  avgWinPercent?: number;
+  /** Average losing trade percentage */
+  avgLossPercent?: number;
   /** Largest winning trade */
   largestWin: number;
   /** Largest losing trade */
   largestLoss: number;
   /** Profit factor (gross profit / gross loss) */
   profitFactor: number;
+  /** Payoff ratio (average win / average loss) */
+  payoffRatio?: number;
   /** Expectancy (average profit per trade) */
   expectancy: number;
+  /** Expectancy as a percentage */
+  expectancyPercent?: number;
+  /** Average holding period in days */
+  avgHoldingPeriod?: number;
+  /** Maximum consecutive winning trades */
+  maxConsecutiveWins?: number;
+  /** Maximum consecutive losing trades */
+  maxConsecutiveLosses?: number;
   /** Volatility (annualized standard deviation) */
   volatility: number;
   /** Beta (market correlation) */
@@ -180,14 +212,22 @@ export interface PerformanceMetrics {
 export interface EquityCurvePoint {
   /** Timestamp */
   timestamp: Date;
+  /** Alias for timestamp for compatibility */
+  date?: Date;
   /** Total portfolio value */
   equity: number;
   /** Cash available */
   cash: number;
   /** Value of open positions */
   positionsValue: number;
+  /** Alias for positionsValue for compatibility */
+  marketValue?: number;
   /** Cumulative return (decimal) */
   cumulativeReturn: number;
+  /** Alias for cumulativeReturn for compatibility */
+  cumulativeReturns?: number;
+  /** Period return (decimal) */
+  returns?: number;
   /** Daily return (decimal) */
   dailyReturn: number;
   /** Current drawdown (decimal) */
@@ -203,35 +243,53 @@ export interface Trade {
   /** Trading symbol */
   symbol: string;
   /** Trade type */
-  type: "LONG" | "SHORT";
+  type?: "LONG" | "SHORT";
+  /** Side (BUY/SELL) for compatibility */
+  side?: "BUY" | "SELL";
   /** Entry timestamp */
-  entryTime: Date;
+  entryTime?: Date;
+  /** Alias for entryTime */
+  entryDate?: Date;
   /** Entry price */
   entryPrice: number;
   /** Quantity */
   quantity: number;
   /** Exit timestamp */
-  exitTime: Date;
+  exitTime?: Date;
+  /** Alias for exitTime */
+  exitDate?: Date;
   /** Exit price */
   exitPrice: number;
   /** Exit reason */
-  exitReason: "SIGNAL" | "STOP_LOSS" | "TAKE_PROFIT" | "TIME_LIMIT" | "END_OF_BACKTEST";
+  exitReason: "SIGNAL" | "STOP_LOSS" | "TAKE_PROFIT" | "TIME_LIMIT" | "END_OF_BACKTEST" | "STRATEGY_EXIT";
   /** Gross profit/loss */
-  grossPnL: number;
+  grossPnL?: number;
   /** Commission paid */
   commission: number;
   /** Slippage cost */
   slippage: number;
+  /** Total cost (commission + slippage) */
+  totalCost?: number;
   /** Net profit/loss */
-  netPnL: number;
+  netPnL?: number;
+  /** Net PnL (alternative naming) */
+  netPnl?: number;
+  /** Alias for netPnL for compatibility */
+  pnl: number;
   /** Return on investment (decimal) */
-  returnPct: number;
+  returnPct?: number;
+  /** Alias for returnPct for compatibility */
+  pnlPercent: number;
   /** Maximum adverse excursion (worst unrealized loss) */
-  mae: number;
+  mae?: number;
   /** Maximum favorable excursion (best unrealized profit) */
-  mfe: number;
+  mfe?: number;
   /** Hold duration in days */
-  holdDuration: number;
+  holdDuration?: number;
+  /** Alias for holdDuration for compatibility */
+  holdingPeriod: number;
+  /** Strategy name */
+  strategyName?: string;
   /** Associated entry signal */
   entrySignal?: Signal;
   /** Associated exit signal */
@@ -245,37 +303,53 @@ export interface Trade {
  */
 export interface Position {
   /** Position identifier */
-  id: string;
+  id?: string;
   /** Trading symbol */
   symbol: string;
   /** Position type */
-  type: "LONG" | "SHORT";
+  type?: "LONG" | "SHORT";
   /** Entry timestamp */
-  entryTime: Date;
-  /** Entry price */
-  entryPrice: number;
+  entryTime?: Date;
+  /** Alias for entryTime for compatibility */
+  entryDate?: Date;
+  /** Entry price (optional, use avgEntryPrice if not present) */
+  entryPrice?: number;
+  /** Average entry price for multiple buys */
+  avgEntryPrice?: number;
   /** Current quantity */
   quantity: number;
   /** Current market price */
   currentPrice: number;
+  /** Current market value */
+  marketValue?: number;
   /** Unrealized profit/loss */
   unrealizedPnL: number;
+  /** Unrealized profit/loss percentage */
+  unrealizedPnLPercent?: number;
+  /** Realized profit/loss */
+  realizedPnL?: number;
+  /** Total profit/loss (realized + unrealized) */
+  totalPnL?: number;
   /** Stop loss price */
   stopLoss?: number;
   /** Take profit price */
   takeProfit?: number;
   /** Commission paid on entry */
-  entryCommission: number;
+  entryCommission?: number;
   /** Slippage on entry */
-  entrySlippage: number;
+  entrySlippage?: number;
   /** Associated entry signal */
   entrySignal?: Signal;
   /** Maximum adverse excursion (running) */
-  currentMae: number;
+  currentMae?: number;
   /** Maximum favorable excursion (running) */
-  currentMfe: number;
+  currentMfe?: number;
+  /** Last update timestamp */
+  lastUpdateDate?: Date;
   /** Position value */
-  value: number;
+  value?: number;
+  /** Strategy name that created this position */
+  strategyName?: string;
 }
 
 /**
@@ -286,18 +360,24 @@ export interface PortfolioSnapshot {
   timestamp: Date;
   /** Total portfolio value */
   totalValue: number;
+  /** Total equity (alias for totalValue) */
+  equity?: number;
   /** Cash available */
   cash: number;
   /** Open positions */
-  positions: Position[];
+  positions: Position[] | Map<string, Position>;
   /** Total position value */
-  positionsValue: number;
+  positionsValue?: number;
   /** Unrealized PnL */
-  unrealizedPnL: number;
+  unrealizedPnL?: number;
   /** Realized PnL */
-  realizedPnL: number;
+  realizedPnL?: number;
   /** Number of trades executed to date */
-  tradesCount: number;
+  tradesCount?: number;
+  /** Leverage ratio */
+  leverage?: number;
+  /** Margin used */
+  marginUsed?: number;
 }
 
 /**
@@ -371,6 +451,8 @@ export interface Order {
   limitPrice?: number;
   /** Stop price (for stop orders) */
   stopPrice?: number;
+  /** Time in force */
+  timeInForce?: "DAY" | "GTC" | "IOC" | "FOK";
   /** Timestamp when order was created */
   createdAt: Date;
   /** Associated signal */
@@ -465,16 +547,24 @@ export interface BacktestError {
 export interface BacktestStrategy {
   /** Strategy name */
   getName(): string;
+  /** Strategy name property (alternative) */
+  name?: string;
   /** Generate signal from historical data */
   generateSignal(
     symbol: string,
     currentData: HistoricalDataPoint,
     historicalData: HistoricalDataPoint[],
   ): Promise<Signal>;
+  /** Called on each new bar */
+  onBar?(symbol: string, bar: Bar, historicalData: Bar[]): Promise<Signal | null>;
+  /** Called when a fill occurs */
+  onFill?(fill: Fill): Promise<void>;
   /** Optional strategy initialization */
   initialize?(): Promise<void>;
   /** Optional cleanup */
   cleanup?(): Promise<void>;
+  /** Called at end of backtest */
+  finalize?(): Promise<void>;
 }
 
 /**
@@ -506,3 +596,41 @@ export interface SlippageModel {
   /** Calculate slippage for an order */
   calculate(order: Order, bar?: Bar, avgVolume?: number, spread?: number): number;
 }
+
+/**
+ * Drawdown point for tracking drawdown over time
+ */
+export interface DrawdownPoint {
+  timestamp: Date;
+  date?: Date; // Alias for timestamp
+  equity: number;
+  peak: number;
+  drawdown: number;
+  drawdownPercent: number;
+  drawdownDuration?: number; // Duration in days
+}
+
+/**
+ * Alias for HistoricalDataPoint with adjusted prices
+ */
+export type BarAdjusted = HistoricalDataPoint;
+
+/**
+ * Union type for all backtest events
+ */
+export type Event = MarketDataEvent | SignalEvent | OrderEvent | FillEvent;
+
+/**
+ * Event type enum
+ */
+export type EventType = 'MARKET_DATA' | 'SIGNAL' | 'ORDER' | 'FILL';
+
+/**
+ * Order side enum
+ */
+export type OrderSide = 'BUY' | 'SELL';
+
+/**
+ * Re-export Signal from trading types for convenience
+ */
+export type { Signal } from "../../types/trading.js";

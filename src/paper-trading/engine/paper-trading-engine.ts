@@ -558,14 +558,16 @@ export class PaperTradingEngine extends EventEmitter {
           });
 
           await this.executeOrder(order, marketData);
-        } else {
-          // Update trailing stop
-          this.portfolio.updateTrailingStop(
-            symbol,
-            position.trailingAmount ?? 0,
-            position.trailingPercent
-          );
         }
+        // TODO: Implement trailing stop logic when PaperPosition interface is updated
+        // else {
+        //   // Update trailing stop
+        //   this.portfolio.updateTrailingStop(
+        //     symbol,
+        //     position.trailingAmount ?? 0,
+        //     position.trailingPercent
+        //   );
+        // }
       }
     }
   }

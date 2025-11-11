@@ -126,7 +126,7 @@ export class MonteCarloSimulator {
         }
 
         // Update portfolio value
-        const currentValue = path[path.length - 1];
+        const currentValue = path[path.length - 1] ?? portfolioValue;
         const newValue = currentValue * (1 + dayReturn);
         path.push(newValue);
 
@@ -140,7 +140,7 @@ export class MonteCarloSimulator {
         }
       }
 
-      const finalValue = path[path.length - 1];
+      const finalValue = path[path.length - 1] ?? portfolioValue;
       const returnPercent = ((finalValue - portfolioValue) / portfolioValue) * 100;
 
       scenarios.push({
@@ -261,15 +261,15 @@ export class MonteCarloSimulator {
     return {
       expectedReturn: Number((accountBalance * expectedReturn).toFixed(2)),
       expectedReturnPercent: Number((expectedReturn * 100).toFixed(2)),
-      medianReturn: Number((accountBalance * medianReturn).toFixed(2)),
-      worstCase5th: Number(worstCase5th.toFixed(2)),
-      bestCase95th: Number(bestCase95th.toFixed(2)),
+      medianReturn: Number((accountBalance * (medianReturn ?? 0)).toFixed(2)),
+      worstCase5th: Number((worstCase5th ?? 0).toFixed(2)),
+      bestCase95th: Number((bestCase95th ?? 0).toFixed(2)),
       probabilityOfProfit: Number(probabilityOfProfit.toFixed(3)),
       probabilityOfLoss: Number(probabilityOfLoss.toFixed(3)),
       probabilityOfLoss10Percent: Number(probabilityOfLoss10Percent.toFixed(3)),
       probabilityOfLoss20Percent: Number(probabilityOfLoss20Percent.toFixed(3)),
-      maxDrawdown: Number((accountBalance * (maxDrawdown / 100)).toFixed(2)),
-      maxDrawdownPercent: Number(maxDrawdown.toFixed(2)),
+      maxDrawdown: Number((accountBalance * ((maxDrawdown ?? 0) / 100)).toFixed(2)),
+      maxDrawdownPercent: Number((maxDrawdown ?? 0).toFixed(2)),
     };
   }
 
@@ -337,6 +337,8 @@ export class MonteCarloSimulator {
 
     for (let i = 0; i < symbols.length; i++) {
       const symbol1 = symbols[i];
+      if (!symbol1) continue;
+
       const returns1 = historicalReturns.get(symbol1);
 
       if (!returns1) continue;
@@ -346,6 +348,8 @@ export class MonteCarloSimulator {
 
       for (let j = 0; j < symbols.length; j++) {
         const symbol2 = symbols[j];
+        if (!symbol2) continue;
+
         const returns2 = historicalReturns.get(symbol2);
 
         if (!returns2) continue;
@@ -384,8 +388,10 @@ export class MonteCarloSimulator {
     let denomY = 0;
 
     for (let i = 0; i < n; i++) {
-      const dx = x[i] - meanX;
-      const dy = y[i] - meanY;
+      const xi = x[i] ?? 0;
+      const yi = y[i] ?? 0;
+      const dx = xi - meanX;
+      const dy = yi - meanY;
       numerator += dx * dy;
       denomX += dx * dx;
       denomY += dy * dy;

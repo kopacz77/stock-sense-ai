@@ -1,57 +1,51 @@
-# Use Node.js LTS version
-FROM node:18-alpine AS base
+# Build stage
+FROM node:18-alpine AS builder
 
 # Install pnpm
-RUN npm install -g pnpm
+RUN npm install -g pnpm@8.15.0
 
-# Set working directory
 WORKDIR /app
 
 # Copy package files
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml ./
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy source code
+# Copy source
 COPY . .
 
-# Build the application
-RUN pnpm build
+# Build TypeScript
+RUN pnpm run build
 
 # Production stage
-FROM node:18-alpine AS production
+FROM node:18-alpine
 
-# Install pnpm
-RUN npm install -g pnpm
+RUN npm install -g pnpm@8.15.0
 
-# Create app user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
 
-# Set working directory
 WORKDIR /app
 
 # Copy package files
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml ./
 
 # Install production dependencies only
-RUN pnpm install --frozen-lockfile --prod
+RUN pnpm install --prod --frozen-lockfile
 
-# Copy built application
-COPY --from=base /app/dist ./dist
+# Copy built code
+COPY --from=builder /app/dist ./dist
 
-# Create necessary directories
-RUN mkdir -p data/cache logs && chown -R nodejs:nodejs /app
+# Create data directories
+RUN mkdir -p /app/data/cache /app/data/paper-trading /app/config && \
+    chown -R nodejs:nodejs /app
 
-# Switch to non-root user
 USER nodejs
 
-# Expose port (if needed for future web interface)
 EXPOSE 3000
 
-# Set the entrypoint
-ENTRYPOINT ["node", "dist/index.js"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
 
-# Default command
-CMD ["--help"]
+CMD ["node", "dist/index.js"]

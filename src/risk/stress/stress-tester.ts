@@ -162,14 +162,14 @@ export class StressTester {
       if (portfolioReturns.length > 0) {
         const sortedReturns = [...portfolioReturns].sort((a, b) => a - b);
         const var95Index = Math.floor(sortedReturns.length * 0.05);
-        stressedVaR = Math.abs(initialValue * sortedReturns[var95Index]);
+        stressedVaR = Math.abs(initialValue * (sortedReturns[var95Index] ?? 0));
 
         // Stressed CVaR
         const tailReturns = sortedReturns.slice(0, var95Index);
         const cvarReturn =
           tailReturns.length > 0
             ? tailReturns.reduce((sum, r) => sum + r, 0) / tailReturns.length
-            : sortedReturns[0];
+            : (sortedReturns[0] ?? 0);
         stressedCVaR = Math.abs(initialValue * cvarReturn);
 
         // Stressed Sharpe (simplified)
@@ -332,7 +332,7 @@ export class StressTester {
         const returns = historicalReturns.get(position.symbol);
         if (returns && returns[day] !== undefined) {
           const weight = position.value / portfolioValue;
-          dayReturn += weight * returns[day];
+          dayReturn += weight * (returns[day] ?? 0);
         }
       }
 

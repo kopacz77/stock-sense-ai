@@ -11,6 +11,39 @@ import { FixedBPSSlippageModel } from "../backtesting/execution/slippage-models.
 import { ZeroCommissionModel } from "../backtesting/execution/commission-models.js";
 import { MeanReversionStrategy } from "../strategies/mean-reversion-strategy.js";
 import { MomentumStrategy } from "../strategies/momentum-strategy.js";
+import type { BacktestStrategy } from "../backtesting/types/backtest-types.js";
+import type { HistoricalData } from "../types/trading.js";
+
+/**
+ * Strategy adapter to convert trading strategies to backtest strategies
+ */
+class StrategyAdapter implements BacktestStrategy {
+  constructor(
+    private strategy: MeanReversionStrategy | MomentumStrategy,
+    private strategyName: string
+  ) {}
+
+  getName(): string {
+    return this.strategyName;
+  }
+
+  async generateSignal(
+    symbol: string,
+    currentData: any,
+    historicalData: any[]
+  ): Promise<any> {
+    const signal = await this.strategy.analyze(symbol, historicalData as HistoricalData[]);
+    return signal;
+  }
+
+  async initialize(): Promise<void> {
+    // No initialization needed
+  }
+
+  async cleanup(): Promise<void> {
+    // No cleanup needed
+  }
+}
 
 // Global engine instance (will be loaded from storage)
 let engine: PaperTradingEngine | null = null;
@@ -91,15 +124,14 @@ export function registerPaperTradingCommands(program: Command): void {
           });
         } else if (options.strategy === "momentum") {
           strategy = new MomentumStrategy({
-            emaPeriod: 20,
-            rsiPeriod: 14,
-            macdFastPeriod: 12,
-            macdSlowPeriod: 26,
-            macdSignalPeriod: 9,
-            minTrendStrength: 60,
+            shortMA: 20,
+            longMA: 50,
+            macdFast: 12,
+            macdSlow: 26,
+            macdSignal: 9,
+            trendStrength: 0.02,
             minConfidence: 65,
-            volumeConfirmation: true,
-            maxHoldingPeriod: 60,
+            volumeThreshold: 1.5,
           });
         } else {
           console.log(chalk.red(`Unknown strategy: ${options.strategy}`));
@@ -108,7 +140,8 @@ export function registerPaperTradingCommands(program: Command): void {
 
         const symbols = options.symbols.split(",").map((s: string) => s.trim());
 
-        await eng.start(strategy, symbols);
+        const strategyAdapter = new StrategyAdapter(strategy, options.strategy);
+        await eng.start(strategyAdapter, symbols);
 
         console.log(chalk.green("Paper trading started!"));
         console.log(chalk.blue(`Strategy: ${options.strategy}`));

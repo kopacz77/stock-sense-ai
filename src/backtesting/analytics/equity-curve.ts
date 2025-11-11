@@ -49,7 +49,7 @@ export class EquityCurveBuilder {
         timestamp: snapshot.timestamp,
         equity,
         cash: snapshot.cash,
-        positionsValue: snapshot.positionsValue,
+        positionsValue: snapshot.positionsValue ?? 0,
         cumulativeReturn,
         dailyReturn,
         drawdown,
@@ -144,6 +144,7 @@ export class EquityCurveBuilder {
    */
   getTotalReturn(curve: EquityCurvePoint[]): number {
     if (curve.length === 0) return 0;
-    return curve[curve.length - 1].cumulativeReturn;
+    const lastPoint = curve[curve.length - 1];
+    return lastPoint?.cumulativeReturn ?? 0;
   }
 }

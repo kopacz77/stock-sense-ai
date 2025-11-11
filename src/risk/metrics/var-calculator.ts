@@ -56,8 +56,8 @@ export class VaRCalculator {
     const index95 = Math.floor((1 - 0.95) * sortedReturns.length);
     const index99 = Math.floor((1 - 0.99) * sortedReturns.length);
 
-    const varReturn95 = sortedReturns[index95];
-    const varReturn99 = sortedReturns[index99];
+    const varReturn95 = sortedReturns[index95] ?? 0;
+    const varReturn99 = sortedReturns[index99] ?? 0;
 
     // VaR is the absolute value of the loss at the percentile
     const oneDayVaR95 = Math.abs(portfolioValue * varReturn95);
@@ -182,8 +182,8 @@ export class VaRCalculator {
     const index95 = Math.floor((1 - 0.95) * sortedReturns.length);
     const index99 = Math.floor((1 - 0.99) * sortedReturns.length);
 
-    const oneDayVaR95 = Math.abs(portfolioValue * sortedReturns[index95]);
-    const oneDayVaR99 = Math.abs(portfolioValue * sortedReturns[index99]);
+    const oneDayVaR95 = Math.abs(portfolioValue * (sortedReturns[index95] ?? 0));
+    const oneDayVaR99 = Math.abs(portfolioValue * (sortedReturns[index99] ?? 0));
 
     const tenDayVaR95 = oneDayVaR95 * Math.sqrt(10);
     const tenDayVaR99 = oneDayVaR99 * Math.sqrt(10);
@@ -233,7 +233,7 @@ export class VaRCalculator {
         const returns = historicalReturns.get(position.symbol);
         if (returns && returns[day] !== undefined) {
           const weight = position.value / totalValue;
-          dayReturn += weight * returns[day];
+          dayReturn += weight * (returns[day] ?? 0);
         }
       }
 
@@ -309,8 +309,10 @@ export class VaRCalculator {
     let denomY = 0;
 
     for (let i = 0; i < n; i++) {
-      const dx = x[i] - meanX;
-      const dy = y[i] - meanY;
+      const xi = x[i] ?? 0;
+      const yi = y[i] ?? 0;
+      const dx = xi - meanX;
+      const dy = yi - meanY;
       numerator += dx * dy;
       denomX += dx * dx;
       denomY += dy * dy;

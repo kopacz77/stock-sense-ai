@@ -356,8 +356,12 @@ function displayHeatmap(heatmap: { symbols: string[]; correlations: number[][] }
   console.log("\n" + " ".repeat(8) + heatmap.symbols.join("  "));
 
   for (let i = 0; i < heatmap.symbols.length; i++) {
-    const row = heatmap.symbols[i].padEnd(6) + " ";
-    const values = heatmap.correlations[i].map((v) => {
+    const symbol = heatmap.symbols[i];
+    const correlationRow = heatmap.correlations[i];
+    if (!symbol || !correlationRow) continue;
+
+    const row = symbol.padEnd(6) + " ";
+    const values = correlationRow.map((v) => {
       if (v > 0.7) return "█";
       if (v > 0.5) return "▓";
       if (v > 0.3) return "▒";

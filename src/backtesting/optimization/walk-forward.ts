@@ -278,6 +278,7 @@ export class WalkForwardAnalyzer {
       totalReturn,
       totalReturnDollar: 0,
       cagr: 0,
+      annualizedReturn: 0,
       volatility: 0,
       sharpeRatio: avgSharpe,
       sortinoRatio: avgSortino,
@@ -301,12 +302,6 @@ export class WalkForwardAnalyzer {
       avgHoldingPeriod: 0,
       maxConsecutiveWins: 0,
       maxConsecutiveLosses: 0,
-      startDate: windows[0]!.testStart,
-      endDate: windows[windows.length - 1]!.testEnd,
-      tradingDays: 0,
-      totalCommissions: 0,
-      totalSlippage: 0,
-      totalCosts: 0,
     };
   }
 

@@ -26,11 +26,7 @@ export function registerBacktestDataCommands(program: Command): void {
     .option('--to <date>', 'End date (YYYY-MM-DD)', getDefaultToDate())
     .option('--provider <name>', 'Data provider (alpha-vantage, finnhub)', 'alpha-vantage')
     .action(async (symbols: string[], options) => {
-      const marketData = new MarketDataService({
-        preferredProvider: options.provider as any,
-        enableCache: true,
-        validateData: true,
-      });
+      const marketData = new MarketDataService();
 
       const spinner = ora('Initializing...').start();
 
@@ -91,11 +87,15 @@ export function registerBacktestDataCommands(program: Command): void {
 
         for (const [symbol, data] of results) {
           if (data.length > 0) {
-            table.push([
-              symbol,
-              data.length.toString(),
-              `${data[0].date} to ${data[data.length - 1].date}`,
-            ]);
+            const first = data[0];
+            const last = data[data.length - 1];
+            if (first && last) {
+              table.push([
+                symbol,
+                data.length.toString(),
+                `${first.date} to ${last.date}`,
+              ]);
+            }
           }
         }
 
@@ -127,14 +127,27 @@ export function registerBacktestDataCommands(program: Command): void {
 
         spinner.succeed(`Imported ${data.length} data points`);
 
+        if (data.length === 0) {
+          console.log(chalk.yellow('No data to cache'));
+          return;
+        }
+
         // Save to cache
         const marketData = new MarketDataService();
         await marketData.initialize();
 
         const cacheManager = marketData.getCacheManager();
 
-        const from = new Date(data[0].date);
-        const to = new Date(data[data.length - 1].date);
+        const first = data[0];
+        const last = data[data.length - 1];
+
+        if (!first || !last) {
+          console.log(chalk.yellow('Invalid data structure'));
+          return;
+        }
+
+        const from = new Date(first.date);
+        const to = new Date(last.date);
 
         await cacheManager.setHistoricalData(
           options.symbol.toUpperCase(),
@@ -145,7 +158,7 @@ export function registerBacktestDataCommands(program: Command): void {
         );
 
         console.log(chalk.green(`\n✅ Data cached for ${options.symbol.toUpperCase()}`));
-        console.log(chalk.gray(`  Date range: ${data[0].date} to ${data[data.length - 1].date}`));
+        console.log(chalk.gray(`  Date range: ${first.date} to ${last.date}`));
         console.log(chalk.gray(`  Data points: ${data.length}`));
       } catch (error) {
         spinner.fail('Import failed');
@@ -193,13 +206,15 @@ export function registerBacktestDataCommands(program: Command): void {
           if (metadata.length > 0) {
             // Show the most recent cache entry
             const latest = metadata[metadata.length - 1];
-            table.push([
-              symbol,
-              latest.dataPoints.toString(),
-              `${latest.from} to ${latest.to}`,
-              latest.provider,
-              new Date(latest.lastUpdated).toLocaleDateString(),
-            ]);
+            if (latest) {
+              table.push([
+                symbol,
+                latest.dataPoints.toString(),
+                `${latest.from} to ${latest.to}`,
+                latest.provider,
+                new Date(latest.lastUpdated).toLocaleDateString(),
+              ]);
+            }
           }
         }
 
@@ -400,9 +415,9 @@ export function registerBacktestDataCommands(program: Command): void {
 function getDefaultFromDate(): string {
   const date = new Date();
   date.setFullYear(date.getFullYear() - 1); // 1 year ago
-  return date.toISOString().split('T')[0];
+  return date.toISOString().split('T')[0] ?? '';
 }
 
 function getDefaultToDate(): string {
-  return new Date().toISOString().split('T')[0];
+  return new Date().toISOString().split('T')[0] ?? '';
 }

@@ -426,6 +426,10 @@ export class MeanReversionStrategy {
     return this.name;
   }
 
+  getDescription(): string {
+    return "Mean reversion strategy using RSI, MFI, and Bollinger Bands";
+  }
+
   getConfig(): MeanReversionConfig {
     return { ...this.config };
   }

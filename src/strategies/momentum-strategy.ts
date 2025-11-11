@@ -492,6 +492,10 @@ export class MomentumStrategy {
     return this.name;
   }
 
+  getDescription(): string {
+    return "Momentum strategy using EMA, MACD, and volume confirmation";
+  }
+
   getConfig(): MomentumConfig {
     return { ...this.config };
   }

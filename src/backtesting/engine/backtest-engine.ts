@@ -36,6 +36,7 @@ export class BacktestEngine {
   private errors: BacktestError[];
   private isRunning: boolean;
   private startTime: number;
+  private currentBars: Map<string, any>; // Store current bar for each symbol
 
   /**
    * Create a new backtest engine
@@ -47,12 +48,22 @@ export class BacktestEngine {
     this.config = config;
     this.eventQueue = new EventQueue();
     this.strategyExecutor = new StrategyExecutor(strategy);
-    this.portfolioTracker = new PortfolioTracker(config.initialCapital);
-    this.fillSimulator = new FillSimulator(config.commission, config.slippage);
+    this.portfolioTracker = new PortfolioTracker(config.initialCapital, config.startDate);
+
+    // Create FillSimulator config from BacktestConfig
+    const fillSimulatorConfig = {
+      slippageModel: config.slippageModel!,
+      commissionModel: config.commissionModel!,
+      fillOnClose: config.fillOnClose ?? true,
+      rejectPartialFills: false,
+    };
+    this.fillSimulator = new FillSimulator(fillSimulatorConfig);
+
     this.dataProvider = dataProvider;
     this.errors = [];
     this.isRunning = false;
     this.startTime = 0;
+    this.currentBars = new Map();
   }
 
   /**
@@ -189,8 +200,13 @@ export class BacktestEngine {
   private async handleMarketDataEvent(event: MarketDataEvent): Promise<void> {
     const { data } = event;
 
+    // Store current bar for fill simulation
+    this.currentBars.set(data.symbol, data);
+
     // Update portfolio with current prices
-    this.portfolioTracker.updatePrices({ [data.symbol]: data.close });
+    const priceMap = new Map<string, number>();
+    priceMap.set(data.symbol, data.close);
+    this.portfolioTracker.updatePositionPrices(priceMap, data.timestamp);
 
     // Check for stop loss / take profit triggers
     await this.checkExitConditions(data);
@@ -201,8 +217,7 @@ export class BacktestEngine {
       this.eventQueue.push(signalEvent);
     }
 
-    // Record portfolio snapshot
-    this.portfolioTracker.recordSnapshot(data.timestamp);
+    // Portfolio snapshot is automatically recorded in updatePositionPrices
   }
 
   /**
@@ -212,10 +227,19 @@ export class BacktestEngine {
   private async handleSignalEvent(event: SignalEvent): Promise<void> {
     const { signal } = event;
 
-    // Convert signal to order
-    const order = await this.portfolioTracker.createOrderFromSignal(signal, event.timestamp);
+    // Convert signal to order (simplified - create order directly)
+    if (signal.action === "BUY" || signal.action === "SELL") {
+      const order = {
+        id: `order-${Date.now()}`,
+        symbol: signal.symbol,
+        type: "MARKET" as const,
+        side: signal.action,
+        quantity: signal.positionSize || 0,
+        createdAt: event.timestamp,
+        signal,
+        strategyName: signal.strategy,
+      };
 
-    if (order) {
       const orderEvent: OrderEvent = {
         type: "ORDER",
         timestamp: event.timestamp,
@@ -233,8 +257,15 @@ export class BacktestEngine {
   private async handleOrderEvent(event: OrderEvent): Promise<void> {
     const { order } = event;
 
+    // Get current bar for the symbol
+    const bar = this.currentBars.get(order.symbol);
+    if (!bar) {
+      this.addError("ERROR", `No bar data available for ${order.symbol}`, { order });
+      return;
+    }
+
     // Simulate order fill
-    const fill = await this.fillSimulator.simulateFill(order, event.timestamp);
+    const fill = this.fillSimulator.simulateFill(order, bar);
 
     if (fill) {
       const fillEvent: FillEvent = {
@@ -262,13 +293,38 @@ export class BacktestEngine {
    * Check exit conditions for open positions (stop loss, take profit)
    * @param data Current market data
    */
-  private async checkExitConditions(data: { symbol: string; high: number; low: number }): Promise<void> {
-    const exitSignals = this.portfolioTracker.checkExitConditions(data.symbol, data.high, data.low);
+  private async checkExitConditions(data: { symbol: string; high: number; low: number; timestamp: Date }): Promise<void> {
+    // Check if position has stop loss or take profit levels
+    const position = this.portfolioTracker.getPosition(data.symbol);
+    if (!position) return;
 
-    for (const signal of exitSignals) {
+    let shouldExit = false;
+    let exitReason = "STOP_LOSS";
+
+    if (position.stopLoss && data.low <= position.stopLoss) {
+      shouldExit = true;
+      exitReason = "STOP_LOSS";
+    } else if (position.takeProfit && data.high >= position.takeProfit) {
+      shouldExit = true;
+      exitReason = "TAKE_PROFIT";
+    }
+
+    if (shouldExit) {
+      const signal = {
+        symbol: data.symbol,
+        action: "SELL" as const,
+        strength: 100,
+        strategy: "EXIT_CONDITIONS",
+        indicators: {} as any, // Empty indicators for exit signals
+        confidence: 100,
+        reasons: [exitReason],
+        timestamp: data.timestamp,
+        positionSize: position.quantity,
+      };
+
       const signalEvent: SignalEvent = {
         type: "SIGNAL",
-        timestamp: new Date(),
+        timestamp: data.timestamp,
         priority: 2,
         signal,
       };
@@ -280,28 +336,37 @@ export class BacktestEngine {
    * Close all remaining positions at the end of the backtest
    */
   private async closeRemainingPositions(): Promise<void> {
-    const positions = this.portfolioTracker.getOpenPositions();
+    const positionsMap = this.portfolioTracker.getPositions();
+    const positions = Array.from(positionsMap.values());
 
     for (const position of positions) {
-      const closeSignal = this.portfolioTracker.createCloseSignal(position, "END_OF_BACKTEST");
+      const closeSignal = {
+        symbol: position.symbol,
+        action: "SELL" as const,
+        strength: 100,
+        strategy: "END_OF_BACKTEST",
+        indicators: {} as any,
+        confidence: 100,
+        reasons: ["END_OF_BACKTEST"],
+        timestamp: this.config.endDate,
+        positionSize: position.quantity,
+      };
 
-      if (closeSignal) {
-        const signalEvent: SignalEvent = {
-          type: "SIGNAL",
-          timestamp: this.config.endDate,
-          priority: 2,
-          signal: closeSignal,
-        };
+      const signalEvent: SignalEvent = {
+        type: "SIGNAL",
+        timestamp: this.config.endDate,
+        priority: 2,
+        signal: closeSignal,
+      };
 
-        // Process the close signal immediately
-        await this.handleSignalEvent(signalEvent);
+      // Process the close signal immediately
+      await this.handleSignalEvent(signalEvent);
 
-        // Process any resulting order and fill events
-        while (!this.eventQueue.isEmpty()) {
-          const event = this.eventQueue.pop();
-          if (event) {
-            await this.processEvent(event);
-          }
+      // Process any resulting order and fill events
+      while (!this.eventQueue.isEmpty()) {
+        const event = this.eventQueue.pop();
+        if (event) {
+          await this.processEvent(event);
         }
       }
     }
@@ -313,19 +378,42 @@ export class BacktestEngine {
    */
   private calculateResults(): BacktestResult {
     const executionTime = Date.now() - this.startTime;
-    const trades = this.portfolioTracker.getTrades();
-    const snapshots = this.portfolioTracker.getSnapshots();
-
-    // Build equity curve
-    const equityCurveBuilder = new EquityCurveBuilder(this.config.initialCapital);
-    const equityCurve = equityCurveBuilder.build(snapshots);
+    const trades = this.portfolioTracker.getClosedTrades();
+    const equityCurve = this.portfolioTracker.getEquityCurve();
+    const transactionCosts = this.portfolioTracker.getTransactionCosts();
 
     // Calculate performance metrics
-    const metricsCalculator = new PerformanceMetricsCalculator(this.config.initialCapital);
-    const metrics = metricsCalculator.calculate(trades, equityCurve);
+    const metrics = PerformanceMetricsCalculator.calculate(
+      equityCurve,
+      trades,
+      this.config.initialCapital,
+      this.config.startDate,
+      this.config.endDate,
+      transactionCosts.commissions,
+      transactionCosts.slippage,
+    );
 
-    // Calculate statistics
-    const statistics = metricsCalculator.calculateStatistics(trades, equityCurve);
+    // Calculate statistics (simplified - using subset of metrics)
+    const statistics = {
+      tradingDays: Math.floor((this.config.endDate.getTime() - this.config.startDate.getTime()) / (1000 * 60 * 60 * 24)),
+      avgDailyReturn: equityCurve.length > 0 ? equityCurve.reduce((sum, p) => sum + p.dailyReturn, 0) / equityCurve.length : 0,
+      dailyReturnStdDev: metrics.volatility / Math.sqrt(252),
+      bestDay: equityCurve.length > 0 ? Math.max(...equityCurve.map(p => p.dailyReturn)) : 0,
+      worstDay: equityCurve.length > 0 ? Math.min(...equityCurve.map(p => p.dailyReturn)) : 0,
+      positiveDays: equityCurve.filter(p => p.dailyReturn > 0).length,
+      negativeDays: equityCurve.filter(p => p.dailyReturn < 0).length,
+      avgWinDuration: trades.filter(t => t.pnl > 0).length > 0
+        ? trades.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.holdingPeriod, 0) / trades.filter(t => t.pnl > 0).length
+        : 0,
+      avgLossDuration: trades.filter(t => t.pnl < 0).length > 0
+        ? trades.filter(t => t.pnl < 0).reduce((sum, t) => sum + t.holdingPeriod, 0) / trades.filter(t => t.pnl < 0).length
+        : 0,
+      maxConsecutiveWins: 0, // TODO: Calculate
+      maxConsecutiveLosses: 0, // TODO: Calculate
+      totalCommission: transactionCosts.commissions,
+      totalSlippage: transactionCosts.slippage,
+      avgTradesPerMonth: trades.length / ((this.config.endDate.getTime() - this.config.startDate.getTime()) / (1000 * 60 * 60 * 24 * 30)),
+    };
 
     return {
       config: this.config,
@@ -334,7 +422,7 @@ export class BacktestEngine {
       metrics,
       equityCurve,
       trades,
-      portfolioSnapshots: snapshots,
+      portfolioSnapshots: [], // Empty for now - was using getSnapshots which doesn't exist
       errors: this.errors,
       statistics,
     };

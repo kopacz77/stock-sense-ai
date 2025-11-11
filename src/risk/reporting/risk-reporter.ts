@@ -160,9 +160,12 @@ export class RiskReporter {
 
     const weekVolatility = this.calculateVolatility(weeklyReturns);
 
-    const dailyReturns = weeklyReturns.map((_, i, arr) =>
-      i > 0 ? (arr[i] - arr[i - 1]) / arr[i - 1] : 0
-    );
+    const dailyReturns = weeklyReturns.map((_, i, arr) => {
+      if (i === 0) return 0;
+      const curr = arr[i] ?? 0;
+      const prev = arr[i - 1] ?? 1;
+      return prev !== 0 ? (curr - prev) / prev : 0;
+    });
 
     const bestDay = dailyReturns.reduce(
       (max, r, i) => (r > max.return ? { date: new Date(), return: r } : max),

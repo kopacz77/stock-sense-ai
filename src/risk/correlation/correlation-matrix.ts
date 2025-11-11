@@ -43,6 +43,8 @@ export class CorrelationMatrixCalculator {
     // Calculate correlation for each pair
     for (let i = 0; i < symbols.length; i++) {
       const symbol1 = symbols[i];
+      if (!symbol1) continue;
+
       const returns1 = historicalReturns.get(symbol1)?.slice(-lookbackPeriod);
 
       if (!returns1 || returns1.length === 0) continue;
@@ -53,6 +55,8 @@ export class CorrelationMatrixCalculator {
 
       for (let j = 0; j < symbols.length; j++) {
         const symbol2 = symbols[j];
+        if (!symbol2) continue;
+
         const returns2 = historicalReturns.get(symbol2)?.slice(-lookbackPeriod);
 
         if (!returns2 || returns2.length === 0) continue;
@@ -185,8 +189,14 @@ export class CorrelationMatrixCalculator {
         let count = 0;
 
         for (let i = 0; i < cluster.length; i++) {
+          const sym1 = cluster[i];
+          if (!sym1) continue;
+
           for (let j = i + 1; j < cluster.length; j++) {
-            const corr = matrix.matrix.get(cluster[i])?.get(cluster[j]) || 0;
+            const sym2 = cluster[j];
+            if (!sym2) continue;
+
+            const corr = matrix.matrix.get(sym1)?.get(sym2) || 0;
             totalCorr += corr;
             count++;
           }
@@ -222,9 +232,15 @@ export class CorrelationMatrixCalculator {
     let pairCount = 0;
 
     for (let i = 0; i < positions.length; i++) {
+      const pos1 = positions[i];
+      if (!pos1) continue;
+
       for (let j = i + 1; j < positions.length; j++) {
-        const symbol1 = positions[i].symbol;
-        const symbol2 = positions[j].symbol;
+        const pos2 = positions[j];
+        if (!pos2) continue;
+
+        const symbol1 = pos1.symbol;
+        const symbol2 = pos2.symbol;
         const correlation = matrix.matrix.get(symbol1)?.get(symbol2) || 0;
         totalCorrelation += correlation;
         pairCount++;
@@ -282,6 +298,8 @@ export class CorrelationMatrixCalculator {
 
     for (let i = 0; i < positions.length; i++) {
       const pos1 = positions[i];
+      if (!pos1) continue;
+
       const returns1 = historicalReturns.get(pos1.symbol);
       if (!returns1) continue;
 
@@ -290,6 +308,8 @@ export class CorrelationMatrixCalculator {
 
       for (let j = 0; j < positions.length; j++) {
         const pos2 = positions[j];
+        if (!pos2) continue;
+
         const returns2 = historicalReturns.get(pos2.symbol);
         if (!returns2) continue;
 
@@ -332,8 +352,10 @@ export class CorrelationMatrixCalculator {
     let denomY = 0;
 
     for (let i = 0; i < n; i++) {
-      const dx = x[i] - meanX;
-      const dy = y[i] - meanY;
+      const xi = x[i] ?? 0;
+      const yi = y[i] ?? 0;
+      const dx = xi - meanX;
+      const dy = yi - meanY;
       numerator += dx * dy;
       denomX += dx * dx;
       denomY += dy * dy;

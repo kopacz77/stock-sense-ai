@@ -462,7 +462,7 @@ export class EncryptedStorage {
     }
 
     // Extract headers from first trade
-    const headers = Object.keys(trades[0]);
+    const headers = Object.keys(trades[0] ?? {});
     const csvLines = [headers.join(",")];
 
     // Convert each trade to CSV row

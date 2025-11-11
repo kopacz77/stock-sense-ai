@@ -70,8 +70,9 @@ export class PortfolioTracker {
     if (existingPosition) {
       // Add to existing position - calculate new average entry price
       const totalShares = existingPosition.quantity + fill.quantity;
+      const avgPrice = existingPosition.avgEntryPrice ?? existingPosition.entryPrice ?? fill.price;
       const totalCostBasis =
-        existingPosition.quantity * existingPosition.avgEntryPrice +
+        existingPosition.quantity * avgPrice +
         fill.quantity * fill.price;
 
       existingPosition.quantity = totalShares;
@@ -87,6 +88,7 @@ export class PortfolioTracker {
       const newPosition: Position = {
         symbol: fill.symbol,
         quantity: fill.quantity,
+        entryPrice: fill.price,
         avgEntryPrice: fill.price,
         currentPrice: fill.price,
         marketValue: fill.quantity * fill.price,
@@ -127,19 +129,24 @@ export class PortfolioTracker {
     this.cash += proceeds;
 
     // Calculate realized P&L for this sale
-    const costBasis = fill.quantity * position.avgEntryPrice;
+    const avgPrice = position.avgEntryPrice ?? position.entryPrice ?? 0;
+    const costBasis = fill.quantity * avgPrice;
     const realizedPnL = proceeds - costBasis;
 
-    // Update position realized P&L
+    // Update position realized P&L (initialize if undefined)
+    if (position.realizedPnL === undefined) {
+      position.realizedPnL = 0;
+    }
     position.realizedPnL += realizedPnL;
 
     // Create closed trade record
+    const entryDate = position.entryDate ?? position.entryTime ?? fill.timestamp;
     const trade: Trade = {
       id: fill.orderId,
       symbol: fill.symbol,
-      entryDate: position.entryDate,
+      entryDate: entryDate,
       exitDate: fill.timestamp,
-      entryPrice: position.avgEntryPrice,
+      entryPrice: avgPrice,
       exitPrice: fill.price,
       quantity: fill.quantity,
       side: "BUY", // We're closing a long position
@@ -149,7 +156,7 @@ export class PortfolioTracker {
       slippage: fill.slippage,
       totalCost: fill.commission + fill.slippage,
       netPnl: realizedPnL,
-      holdingPeriod: this.calculateHoldingPeriod(position.entryDate, fill.timestamp),
+      holdingPeriod: this.calculateHoldingPeriod(entryDate, fill.timestamp),
       strategyName: fill.strategyName,
       exitReason: "STRATEGY_EXIT",
     };
@@ -183,13 +190,15 @@ export class PortfolioTracker {
         position.marketValue = position.quantity * currentPrice;
 
         // Calculate unrealized P&L
-        const costBasis = position.quantity * position.avgEntryPrice;
+        const avgPrice = position.avgEntryPrice ?? position.entryPrice ?? currentPrice;
+        const costBasis = position.quantity * avgPrice;
         const marketValue = position.marketValue;
         position.unrealizedPnL = marketValue - costBasis;
         position.unrealizedPnLPercent = (position.unrealizedPnL / costBasis) * 100;
 
         // Total P&L = realized + unrealized
-        position.totalPnL = position.realizedPnL + position.unrealizedPnL;
+        const realized = position.realizedPnL ?? 0;
+        position.totalPnL = realized + position.unrealizedPnL;
 
         position.lastUpdateDate = currentDate;
       }
@@ -207,14 +216,21 @@ export class PortfolioTracker {
     const marketValue = this.getMarketValue();
     const returns = this.calculateDailyReturn();
     const cumulativeReturns = ((equity - this.initialCash) / this.initialCash) * 100;
+    const dailyReturn = returns;
+    const drawdown = 0; // Will be calculated by analytics
 
     const point: EquityCurvePoint = {
+      timestamp: date,
       date,
       equity,
       cash: this.cash,
+      positionsValue: marketValue,
       marketValue,
       returns,
+      cumulativeReturn: cumulativeReturns / 100, // Convert to decimal
       cumulativeReturns,
+      dailyReturn,
+      drawdown,
     };
 
     this.equityCurve.push(point);
@@ -262,7 +278,7 @@ export class PortfolioTracker {
   getMarketValue(): number {
     let total = 0;
     for (const position of this.positions.values()) {
-      total += position.marketValue;
+      total += position.marketValue ?? 0;
     }
     return total;
   }

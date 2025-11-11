@@ -69,8 +69,7 @@ export class PaperTradingAPI {
 
         // Convert Map to array for JSON serialization
         const positions = Array.from(portfolio.positions.entries()).map(
-          ([symbol, position]) => ({
-            symbol,
+          ([_symbol, position]) => ({
             ...position,
           })
         );
@@ -133,9 +132,9 @@ export class PaperTradingAPI {
 
         // TODO: Load strategy dynamically
         // For now, return error
-        res.status(501).json({ error: "Start endpoint not fully implemented" });
+        return res.status(501).json({ error: "Start endpoint not fully implemented" });
       } catch (error) {
-        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+        return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
       }
     });
 
@@ -160,9 +159,9 @@ export class PaperTradingAPI {
           return res.status(404).json({ error: "Position not found" });
         }
 
-        res.json({ symbol, ...position });
+        return res.json({ ...position });
       } catch (error) {
-        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+        return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
       }
     });
 
