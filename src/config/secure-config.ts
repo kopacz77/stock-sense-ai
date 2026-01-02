@@ -137,6 +137,7 @@ export class SecureConfig {
   }
 
   private async loadConfig(): Promise<void> {
+    // First, try to load from encrypted config file
     try {
       const encryptedData = await fs.readFile(this.CONFIG_FILE, "utf8");
       const key = await this.getEncryptionKey();
@@ -145,12 +146,71 @@ export class SecureConfig {
 
       const decrypted = this.decrypt(encryptedData, key);
       this.config = ConfigSchema.parse(JSON.parse(decrypted));
+      return;
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-        console.log("No existing config found. Please run setup.");
-      } else {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
         console.error("Error loading config:", error);
       }
+    }
+
+    // Fallback: try to load from environment variables
+    if (this.loadFromEnv()) {
+      console.log("✅ Configuration loaded from environment variables");
+      return;
+    }
+
+    console.log("No existing config found. Please run setup.");
+  }
+
+  private loadFromEnv(): boolean {
+    const alphaVantage = process.env.ALPHA_VANTAGE_API_KEY;
+    const finnhub = process.env.FINNHUB_API_KEY;
+
+    // Require at least the API keys
+    if (!alphaVantage || !finnhub || alphaVantage === "your_key_here" || finnhub === "your_key_here") {
+      return false;
+    }
+
+    const config: ConfigType = {
+      apis: {
+        alphaVantage,
+        finnhub,
+        newsApi: process.env.NEWS_API_KEY,
+      },
+      notifications: {},
+      trading: {
+        maxPositionSize: Number(process.env.RISK_MAX_POSITION_SIZE_PERCENT || 25) / 100,
+        maxRiskPerTrade: 0.01, // 1% max risk per trade (schema max is 2%)
+        enableLiveTrading: false,
+      },
+    };
+
+    // Add Telegram if configured
+    const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+    const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+    if (telegramToken && telegramChatId && telegramToken !== "your_token_here") {
+      config.notifications.telegram = {
+        botToken: telegramToken,
+        chatId: telegramChatId,
+      };
+    }
+
+    // Add SendGrid if configured
+    const sendgridKey = process.env.SENDGRID_API_KEY;
+    const sendgridTo = process.env.SENDGRID_TO_EMAIL;
+    if (sendgridKey && sendgridTo && sendgridKey !== "your_key_here") {
+      config.notifications.email = {
+        sendgridKey,
+        recipient: sendgridTo,
+      };
+    }
+
+    try {
+      this.config = ConfigSchema.parse(config);
+      return true;
+    } catch (error) {
+      console.error("Invalid environment configuration:", error);
+      return false;
     }
   }
 

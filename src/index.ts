@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import "dotenv/config";
 import chalk from "chalk";
 import Table from "cli-table3";
 import { Command } from "commander";

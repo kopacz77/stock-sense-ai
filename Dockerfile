@@ -9,8 +9,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile
+# Install dependencies (ignore prepare script since source isn't copied yet)
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Copy source
 COPY . .
@@ -28,14 +28,14 @@ RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
 
 WORKDIR /app
 
+# Copy built code first
+COPY --from=builder /app/dist ./dist
+
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile
-
-# Copy built code
-COPY --from=builder /app/dist ./dist
+# Install production dependencies only (ignore prepare script)
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # Create data directories
 RUN mkdir -p /app/data/cache /app/data/paper-trading /app/config && \
@@ -45,7 +45,6 @@ USER nodejs
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
-
-CMD ["node", "dist/index.js"]
+# Keep container running and ready for CLI commands
+# Use tail -f /dev/null to keep container alive
+CMD ["tail", "-f", "/dev/null"]
