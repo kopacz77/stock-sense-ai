@@ -4,6 +4,8 @@ import type {
   Opportunity,
   AnalysisResult,
   MarketOverview,
+  TechnicalIndicatorData,
+  SystemSettings,
 } from '@/types/trading';
 
 const API_BASE = '/api';
@@ -70,6 +72,18 @@ export const api = {
   // Market endpoints
   async getMarketOverview(): Promise<MarketOverview> {
     const response = await fetch(`${API_BASE}/market/overview`);
+    return handleResponse(response);
+  },
+
+  // Technical Indicators endpoints
+  async getIndicators(symbol: string): Promise<TechnicalIndicatorData> {
+    const response = await fetch(`${API_BASE}/indicators/${encodeURIComponent(symbol)}`);
+    return handleResponse(response);
+  },
+
+  // Settings endpoints
+  async getSettings(): Promise<SystemSettings> {
+    const response = await fetch(`${API_BASE}/settings`);
     return handleResponse(response);
   },
 };

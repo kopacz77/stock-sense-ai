@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type TabType = 'monitoring' | 'discovery' | 'analysis' | 'market';
+type TabType = 'monitoring' | 'discovery' | 'analysis' | 'market' | 'settings' | 'help';
 
 interface UIState {
   activeTab: TabType;

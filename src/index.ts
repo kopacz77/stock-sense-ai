@@ -172,6 +172,7 @@ program
     const spinner = ora("Checking system health...").start();
 
     try {
+      await marketData.initialize();
       const health = await marketData.healthCheck();
       const cacheStats = await marketData.getCacheStats();
 

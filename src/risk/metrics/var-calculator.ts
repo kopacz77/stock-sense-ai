@@ -1,10 +1,21 @@
 /**
  * Value at Risk (VaR) Calculator
  * Supports Historical, Parametric, and Monte Carlo methods
+ *
+ * Statistical Notes:
+ * - Uses ONE-TAILED z-scores (1.645 for 95%, 2.326 for 99%) because VaR measures
+ *   directional loss risk (left tail only), not two-tailed confidence intervals
+ * - Uses Bessel's correction (n-1 denominator) for unbiased sample variance
+ * - Monte Carlo uses Cholesky decomposition for proper correlation modeling
  */
 
 import type { Position } from "../../types/trading.js";
 import type { VaRResult, VaRCalculationOptions, VaRMethod } from "../types/risk-types.js";
+
+// One-tailed z-scores for VaR (left tail only - measuring loss probability)
+// These are the correct values for VaR as we only care about downside risk
+const Z_SCORE_95 = 1.645; // P(Z < -1.645) = 0.05 (5% left tail)
+const Z_SCORE_99 = 2.326; // P(Z < -2.326) = 0.01 (1% left tail)
 
 export class VaRCalculator {
   /**
@@ -100,23 +111,20 @@ export class VaRCalculator {
       throw new Error("Insufficient historical data for VaR calculation");
     }
 
-    // Calculate mean and standard deviation
-    const mean = portfolioReturns.reduce((sum, r) => sum + r, 0) / portfolioReturns.length;
+    // Calculate mean and standard deviation with Bessel's correction (n-1)
+    // Bessel's correction provides unbiased estimate of population variance from sample
+    const n = portfolioReturns.length;
+    const mean = portfolioReturns.reduce((sum, r) => sum + r, 0) / n;
     const variance =
       portfolioReturns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) /
-      portfolioReturns.length;
+      (n - 1); // Bessel's correction: divide by (n-1) not n
     const stdDev = Math.sqrt(variance);
 
-    // Z-scores for different confidence levels
-    // 95% confidence: 1.645 (one-tailed)
-    // 99% confidence: 2.326 (one-tailed)
-    const zScore95 = 1.645;
-    const zScore99 = 2.326;
-
-    // VaR = Portfolio Value × (mean - z-score × σ)
-    // We use absolute value and subtract mean if it's positive (conservative)
-    const oneDayVaR95 = Math.abs(portfolioValue * (zScore95 * stdDev - mean));
-    const oneDayVaR99 = Math.abs(portfolioValue * (zScore99 * stdDev - mean));
+    // VaR = Portfolio Value × (z-score × σ - mean)
+    // Using one-tailed z-scores because VaR measures left-tail loss probability only
+    // The mean is subtracted to account for expected return (conservative approach)
+    const oneDayVaR95 = Math.abs(portfolioValue * (Z_SCORE_95 * stdDev - mean));
+    const oneDayVaR99 = Math.abs(portfolioValue * (Z_SCORE_99 * stdDev - mean));
 
     // Scale for 10-day horizon using sqrt(T) rule
     const tenDayVaR95 = oneDayVaR95 * Math.sqrt(10);
@@ -137,10 +145,10 @@ export class VaRCalculator {
   }
 
   /**
-   * Monte Carlo VaR: Simulation-based
+   * Monte Carlo VaR: Simulation-based with Cholesky decomposition
    * - Generate 10,000+ scenarios
-   * - Account for correlations
-   * - More accurate for non-normal distributions
+   * - Uses Cholesky decomposition for proper correlation modeling
+   * - More accurate for non-normal distributions and correlated assets
    * Target: <500ms for 10-position portfolio
    */
   private async calculateMonteCarloVaR(
@@ -153,24 +161,47 @@ export class VaRCalculator {
 
     // Calculate statistics for each asset
     const assetStats = this.calculateAssetStatistics(historicalReturns);
+    const symbols = positions.map(p => p.symbol).filter(s => assetStats.has(s));
+    const n = symbols.length;
 
-    // Calculate correlation matrix
-    const correlationMatrix = this.calculateSimpleCorrelationMatrix(positions, historicalReturns);
+    if (n === 0) {
+      throw new Error("No valid asset statistics for Monte Carlo simulation");
+    }
 
-    // Run Monte Carlo simulations
+    // Build correlation matrix as 2D array for Cholesky decomposition
+    const correlationMatrix = this.buildCorrelationMatrix(symbols, historicalReturns);
+
+    // Perform Cholesky decomposition: Σ = L × L^T
+    // This allows us to generate correlated random variables from independent ones
+    const choleskyL = this.choleskyDecomposition(correlationMatrix);
+
+    // Get means and standard deviations as arrays
+    const means = symbols.map(s => assetStats.get(s)?.mean ?? 0);
+    const stdDevs = symbols.map(s => assetStats.get(s)?.stdDev ?? 0);
+    const weights = symbols.map(s => {
+      const pos = positions.find(p => p.symbol === s);
+      return pos ? pos.value / portfolioValue : 0;
+    });
+
+    // Run Monte Carlo simulations with correlated returns
     const simulatedReturns: number[] = [];
 
     for (let sim = 0; sim < numSimulations; sim++) {
+      // Generate n independent standard normal random variables
+      const z: number[] = [];
+      for (let i = 0; i < n; i++) {
+        z.push(this.generateStandardNormalRandom());
+      }
+
+      // Transform to correlated random variables using Cholesky: Y = L × Z
+      const correlatedZ = this.multiplyMatrixVector(choleskyL, z);
+
+      // Calculate portfolio return with correlated asset returns
       let portfolioReturn = 0;
-
-      for (const position of positions) {
-        const stats = assetStats.get(position.symbol);
-        if (!stats) continue;
-
-        // Generate random return using normal distribution
-        const randomReturn = this.generateNormalRandom(stats.mean, stats.stdDev);
-        const weight = position.value / portfolioValue;
-        portfolioReturn += weight * randomReturn;
+      for (let i = 0; i < n; i++) {
+        // Transform standard normal to asset return: r = μ + σ × correlated_z
+        const assetReturn = (means[i] ?? 0) + (stdDevs[i] ?? 0) * (correlatedZ[i] ?? 0);
+        portfolioReturn += (weights[i] ?? 0) * assetReturn;
       }
 
       simulatedReturns.push(portfolioReturn);
@@ -200,6 +231,123 @@ export class VaRCalculator {
       portfolioValue: Number(portfolioValue.toFixed(2)),
       interpretation,
     };
+  }
+
+  /**
+   * Build correlation matrix as 2D array from historical returns
+   */
+  private buildCorrelationMatrix(
+    symbols: string[],
+    historicalReturns: Map<string, number[]>
+  ): number[][] {
+    const n = symbols.length;
+    const matrix: number[][] = [];
+
+    for (let i = 0; i < n; i++) {
+      matrix[i] = [];
+      const symbolI = symbols[i];
+      const returns1 = symbolI ? historicalReturns.get(symbolI) ?? [] : [];
+
+      for (let j = 0; j < n; j++) {
+        const row = matrix[i];
+        if (!row) continue;
+
+        if (i === j) {
+          row[j] = 1.0; // Diagonal is always 1
+        } else {
+          const symbolJ = symbols[j];
+          const returns2 = symbolJ ? historicalReturns.get(symbolJ) ?? [] : [];
+          row[j] = this.calculatePearsonCorrelation(returns1, returns2);
+        }
+      }
+    }
+
+    return matrix;
+  }
+
+  /**
+   * Cholesky decomposition: decompose positive-definite matrix Σ into L × L^T
+   * where L is a lower triangular matrix.
+   *
+   * This is essential for generating correlated random variables:
+   * If Z is a vector of independent standard normals, then Y = L × Z
+   * has covariance matrix Σ.
+   *
+   * Uses Cholesky-Banachiewicz algorithm.
+   */
+  private choleskyDecomposition(matrix: number[][]): number[][] {
+    const n = matrix.length;
+    const L: number[][] = Array(n).fill(null).map(() => Array(n).fill(0) as number[]);
+
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j <= i; j++) {
+        let sum = 0;
+        const rowI = L[i];
+        const rowJ = L[j];
+        const matrixRowI = matrix[i];
+        const matrixRowJ = matrix[j];
+
+        if (!rowI || !rowJ || !matrixRowI || !matrixRowJ) continue;
+
+        if (j === i) {
+          // Diagonal elements
+          for (let k = 0; k < j; k++) {
+            const Ljk = rowJ[k] ?? 0;
+            sum += Ljk * Ljk;
+          }
+          const diagonalValue = (matrixRowJ[j] ?? 0) - sum;
+
+          // Handle numerical instability - if slightly negative due to floating point, clamp to small positive
+          if (diagonalValue < 0) {
+            if (diagonalValue > -1e-10) {
+              rowJ[j] = 1e-10; // Small positive value
+            } else {
+              // Matrix is not positive definite - fall back to identity-like behavior
+              console.warn(`Cholesky decomposition: matrix not positive definite at index ${j}`);
+              rowJ[j] = 1e-6;
+            }
+          } else {
+            rowJ[j] = Math.sqrt(diagonalValue);
+          }
+        } else {
+          // Off-diagonal elements
+          for (let k = 0; k < j; k++) {
+            sum += (rowI[k] ?? 0) * (rowJ[k] ?? 0);
+          }
+          const divisor = rowJ[j] ?? 0;
+          rowI[j] = divisor > 1e-10 ? ((matrixRowI[j] ?? 0) - sum) / divisor : 0;
+        }
+      }
+    }
+
+    return L;
+  }
+
+  /**
+   * Multiply matrix by vector: result = M × v
+   */
+  private multiplyMatrixVector(matrix: number[][], vector: number[]): number[] {
+    const n = matrix.length;
+    const result: number[] = [];
+
+    for (let i = 0; i < n; i++) {
+      let sum = 0;
+      for (let j = 0; j < vector.length; j++) {
+        sum += (matrix[i]?.[j] ?? 0) * (vector[j] ?? 0);
+      }
+      result.push(sum);
+    }
+
+    return result;
+  }
+
+  /**
+   * Generate standard normal random number (mean=0, stdDev=1) using Box-Muller
+   */
+  private generateStandardNormalRandom(): number {
+    const u1 = Math.random();
+    const u2 = Math.random();
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   }
 
   /**
@@ -245,6 +393,7 @@ export class VaRCalculator {
 
   /**
    * Calculate mean and standard deviation for each asset
+   * Uses Bessel's correction (n-1) for unbiased sample variance
    */
   private calculateAssetStatistics(
     historicalReturns: Map<string, number[]>
@@ -252,46 +401,18 @@ export class VaRCalculator {
     const stats = new Map<string, { mean: number; stdDev: number }>();
 
     for (const [symbol, returns] of historicalReturns.entries()) {
-      if (returns.length === 0) continue;
+      if (returns.length < 2) continue; // Need at least 2 samples for Bessel's correction
 
-      const mean = returns.reduce((sum, r) => sum + r, 0) / returns.length;
+      const n = returns.length;
+      const mean = returns.reduce((sum, r) => sum + r, 0) / n;
       const variance =
-        returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / returns.length;
+        returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / (n - 1); // Bessel's correction
       const stdDev = Math.sqrt(variance);
 
       stats.set(symbol, { mean, stdDev });
     }
 
     return stats;
-  }
-
-  /**
-   * Calculate simple correlation matrix (for Monte Carlo)
-   */
-  private calculateSimpleCorrelationMatrix(
-    positions: Position[],
-    historicalReturns: Map<string, number[]>
-  ): Map<string, Map<string, number>> {
-    const matrix = new Map<string, Map<string, number>>();
-
-    for (const pos1 of positions) {
-      const returns1 = historicalReturns.get(pos1.symbol);
-      if (!returns1) continue;
-
-      if (!matrix.has(pos1.symbol)) {
-        matrix.set(pos1.symbol, new Map());
-      }
-
-      for (const pos2 of positions) {
-        const returns2 = historicalReturns.get(pos2.symbol);
-        if (!returns2) continue;
-
-        const correlation = this.calculatePearsonCorrelation(returns1, returns2);
-        matrix.get(pos1.symbol)!.set(pos2.symbol, correlation);
-      }
-    }
-
-    return matrix;
   }
 
   /**
@@ -320,16 +441,6 @@ export class VaRCalculator {
 
     const denominator = Math.sqrt(denomX * denomY);
     return denominator === 0 ? 0 : numerator / denominator;
-  }
-
-  /**
-   * Generate random number from normal distribution (Box-Muller transform)
-   */
-  private generateNormalRandom(mean: number, stdDev: number): number {
-    const u1 = Math.random();
-    const u2 = Math.random();
-    const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-    return mean + stdDev * z0;
   }
 
   /**

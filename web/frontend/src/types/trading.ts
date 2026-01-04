@@ -122,3 +122,95 @@ export interface AnalysisResult {
   signal?: Signal;
   indicators?: Record<string, number>;
 }
+
+// Technical Indicators types
+export interface MarketRegime {
+  type: 'BULLISH_TREND' | 'BEARISH_TREND' | 'SIDEWAYS' | 'VOLATILE';
+  strength: number;
+  volatility: 'LOW' | 'MEDIUM' | 'HIGH';
+  trendStrength: number;
+  confidence: number;
+}
+
+export interface TechnicalIndicators {
+  rsi: number;
+  mfi: number;
+  macd: {
+    MACD: number;
+    signal: number;
+    histogram: number;
+  };
+  bollingerBands: {
+    upper: number;
+    middle: number;
+    lower: number;
+  };
+  sma: {
+    short: number;
+    medium: number;
+    long: number;
+  };
+  ema: {
+    short: number;
+    long: number;
+  };
+  atr: number;
+  stochastic: {
+    k: number;
+    d: number;
+  };
+  cci: number;
+  williamsR: number;
+  volumeProfile: {
+    averageVolume: number;
+    volumeRatio: number;
+    volumeTrend: 'increasing' | 'decreasing' | 'stable';
+  };
+  marketRegime: MarketRegime;
+}
+
+export interface TechnicalIndicatorData {
+  symbol: string;
+  timestamp: string;
+  indicators: TechnicalIndicators;
+  interpretation: {
+    bullishSignals: string[];
+    bearishSignals: string[];
+    neutralSignals: string[];
+  };
+  currentPrice: number;
+  priceChange: number;
+}
+
+// System Settings types
+export interface SystemSettings {
+  monitoring: {
+    isRunning: boolean;
+    interval: number;
+    lastScan: string | null;
+    totalScans: number;
+  };
+  dataProviders: {
+    alphaVantage: boolean;
+    finnhub: boolean;
+    errors: string[];
+  };
+  features: {
+    technicalIndicators: boolean;
+    rsi: boolean;
+    macd: boolean;
+    bollingerBands: boolean;
+    movingAverages: boolean;
+    volumeProfile: boolean;
+    marketRegime: boolean;
+    stochastic: boolean;
+    cci: boolean;
+    williamsR: boolean;
+    atr: boolean;
+  };
+  riskMetrics: {
+    varEnabled: boolean;
+    cvarEnabled: boolean;
+    volatilityAnalysis: boolean;
+  };
+}

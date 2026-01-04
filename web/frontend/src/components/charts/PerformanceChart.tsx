@@ -91,7 +91,7 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
           color: '#e2e8f0',
           font: {
             size: 12,
-            weight: '500',
+            weight: 500 as const,
           },
         },
       },
@@ -131,7 +131,7 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
           color: '#e2e8f0',
           font: {
             size: 12,
-            weight: '600',
+            weight: 'bold' as const,
           },
         },
         ticks: {
@@ -154,7 +154,7 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
           color: '#e2e8f0',
           font: {
             size: 12,
-            weight: '600',
+            weight: 'bold' as const,
           },
         },
         ticks: {

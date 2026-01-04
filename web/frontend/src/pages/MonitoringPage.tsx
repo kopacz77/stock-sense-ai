@@ -6,25 +6,27 @@ import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
 import { StatusIndicator } from '@/components/ui/StatusIndicator';
-import { LoadingCard } from '@/components/ui/LoadingSpinner';
+import { EmptyState } from '@/components/ui/LoadingSpinner';
 import { PerformanceChart } from '@/components/charts/PerformanceChart';
 import { OpportunityCard } from '@/components/opportunities/OpportunityCard';
 import { useTradingStore } from '@/stores/useTradingStore';
 import { api } from '@/services/api';
 import { formatUptime } from '@/utils/formatters';
-
-const SECTOR_OPTIONS = [
-  { value: 'TECHNOLOGY', label: 'Technology' },
-  { value: 'HEALTHCARE', label: 'Healthcare' },
-  { value: 'FINANCE', label: 'Finance' },
-  { value: 'GROWTH', label: 'Growth' },
-];
+import {
+  Gamepad2,
+  RefreshCw,
+  TrendingUp,
+  BarChart3,
+  Target,
+  Play,
+  Square,
+  Building2,
+} from 'lucide-react';
 
 export function MonitoringPage() {
-  const { stats, overview, opportunities, chartData } = useTradingStore();
+  const { stats, overview, opportunities, chartData, isConnected } = useTradingStore();
 
   const [interval, setInterval] = useState('90');
-  const [sectors, setSectors] = useState<string[]>([]);
   const [includeTrending, setIncludeTrending] = useState(false);
   const [confidence, setConfidence] = useState('75');
   const [isStarting, setIsStarting] = useState(false);
@@ -35,17 +37,14 @@ export function MonitoringPage() {
     try {
       const result = await api.startMonitoring({
         interval: Number(interval),
-        sectors,
+        sectors: [],
         trending: includeTrending,
         confidence: Number(confidence),
         maxResults: 20,
       });
 
       if (result.success) {
-        toast.success(
-          `Monitoring Started!\n\nInterval: ${interval} minutes\nSectors: ${sectors.join(', ') || 'SP500'}\nTrending: ${includeTrending ? 'Yes' : 'No'}\nConfidence: ${confidence}%`,
-          { duration: 5000 }
-        );
+        toast.success('Monitoring started successfully');
       } else {
         toast.error(result.error || 'Failed to start monitoring');
       }
@@ -63,7 +62,7 @@ export function MonitoringPage() {
       const result = await api.stopMonitoring();
 
       if (result.success) {
-        toast.success('Monitoring stopped successfully!');
+        toast.success('Monitoring stopped');
       } else {
         toast.error(result.error || 'Failed to stop monitoring');
       }
@@ -83,12 +82,15 @@ export function MonitoringPage() {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="space-y-6"
+      role="tabpanel"
+      id="panel-monitoring"
+      aria-labelledby="tab-monitoring"
     >
       {/* Controls */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Monitoring Controls */}
         <Card>
-          <CardHeader icon="🎮">Monitoring Controls</CardHeader>
+          <CardHeader icon={<Gamepad2 className="w-5 h-5" />}>Monitoring Controls</CardHeader>
           <CardContent>
             <div className="space-y-4">
               <div className="flex flex-wrap gap-3">
@@ -96,9 +98,19 @@ export function MonitoringPage() {
                   variant="success"
                   onClick={handleStartMonitoring}
                   loading={isStarting}
-                  disabled={stats.isRunning}
+                  disabled={stats.isRunning || !isConnected}
                 >
-                  {stats.isRunning ? '🟢 Running' : 'Start Monitoring'}
+                  {stats.isRunning ? (
+                    <>
+                      <Play className="w-4 h-4 fill-current" aria-hidden="true" />
+                      Running
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4" aria-hidden="true" />
+                      Start
+                    </>
+                  )}
                 </Button>
                 <Button
                   variant="danger"
@@ -106,12 +118,14 @@ export function MonitoringPage() {
                   loading={isStopping}
                   disabled={!stats.isRunning}
                 >
-                  Stop Monitoring
+                  <Square className="w-4 h-4" aria-hidden="true" />
+                  Stop
                 </Button>
                 <Select
                   value={interval}
                   onChange={(e) => setInterval(e.target.value)}
-                  className="w-32"
+                  className="w-28 sm:w-32"
+                  aria-label="Scan interval"
                 >
                   <option value="60">60 min</option>
                   <option value="90">90 min</option>
@@ -120,27 +134,29 @@ export function MonitoringPage() {
                 </Select>
               </div>
 
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-2 text-sm text-gray-300">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                <label className="flex items-center gap-2 text-sm text-dark-text-secondary cursor-pointer">
                   <input
                     type="checkbox"
                     checked={includeTrending}
                     onChange={(e) => setIncludeTrending(e.target.checked)}
-                    className="w-4 h-4 rounded accent-primary-500"
+                    className="w-4 h-4 rounded accent-primary-500 bg-dark-surface border-dark-border"
                   />
                   Include Trending
                 </label>
                 <div className="flex items-center gap-2">
-                  <label className="text-sm text-gray-300">Confidence:</label>
+                  <label htmlFor="confidence" className="text-sm text-dark-text-secondary">Confidence:</label>
                   <Input
+                    id="confidence"
                     type="number"
                     value={confidence}
                     onChange={(e) => setConfidence(e.target.value)}
                     min="60"
                     max="95"
                     className="w-20"
+                    aria-describedby="confidence-unit"
                   />
-                  <span className="text-sm text-gray-400">%</span>
+                  <span id="confidence-unit" className="text-sm text-dark-text-tertiary">%</span>
                 </div>
               </div>
             </div>
@@ -149,9 +165,9 @@ export function MonitoringPage() {
 
         {/* Status */}
         <Card>
-          <CardHeader icon="🔄">Status</CardHeader>
+          <CardHeader icon={<RefreshCw className="w-5 h-5" />}>Status</CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3">
               <StatusIndicator
                 label="Status"
                 value={stats.isRunning ? 'RUNNING' : 'STOPPED'}
@@ -189,12 +205,12 @@ export function MonitoringPage() {
       </div>
 
       {/* Market Overview and Chart */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Market Overview */}
         <Card>
-          <CardHeader icon="📈">Market Overview</CardHeader>
+          <CardHeader icon={<TrendingUp className="w-5 h-5" />}>Market Overview</CardHeader>
           <CardContent>
-            <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4">
               <StatusIndicator
                 label="Sentiment"
                 value={overview.marketSentiment}
@@ -215,11 +231,14 @@ export function MonitoringPage() {
 
             {overview.topSectors.length > 0 && (
               <div className="mt-4">
-                <h4 className="text-sm font-semibold text-gray-300 mb-2">🏭 Active Sectors:</h4>
+                <h4 className="flex items-center gap-2 text-sm font-semibold text-dark-text-secondary mb-2">
+                  <Building2 className="w-4 h-4" aria-hidden="true" />
+                  Active Sectors
+                </h4>
                 <ul className="space-y-1">
                   {overview.topSectors.map((sector) => (
-                    <li key={sector.sector} className="text-sm text-gray-400">
-                      {sector.sector}: <span className="text-gray-300 font-medium">{sector.signalCount} signals</span>
+                    <li key={sector.sector} className="text-sm text-dark-text-tertiary">
+                      {sector.sector}: <span className="text-dark-text-secondary font-medium">{sector.signalCount} signals</span>
                     </li>
                   ))}
                 </ul>
@@ -230,7 +249,7 @@ export function MonitoringPage() {
 
         {/* Performance Chart */}
         <Card>
-          <CardHeader icon="📊">Performance Chart</CardHeader>
+          <CardHeader icon={<BarChart3 className="w-5 h-5" />}>Performance Chart</CardHeader>
           <CardContent>
             <PerformanceChart data={chartData} />
           </CardContent>
@@ -239,10 +258,28 @@ export function MonitoringPage() {
 
       {/* Recent Opportunities */}
       <Card className="col-span-full">
-        <CardHeader icon="🎯">Recent Opportunities</CardHeader>
+        <CardHeader icon={<Target className="w-5 h-5" />}>Recent Opportunities</CardHeader>
         <CardContent>
-          {opportunities.length === 0 ? (
-            <LoadingCard message="No recent opportunities found" />
+          {!isConnected ? (
+            <EmptyState
+              variant="error"
+              title="Not Connected"
+              description="Waiting for connection to the server..."
+            />
+          ) : opportunities.length === 0 ? (
+            <EmptyState
+              variant="opportunities"
+              title="No Opportunities Found"
+              description="Start monitoring to discover trading opportunities, or try adjusting your confidence threshold."
+              action={
+                !stats.isRunning && (
+                  <Button variant="primary" size="sm" onClick={handleStartMonitoring} loading={isStarting}>
+                    <Play className="w-4 h-4" aria-hidden="true" />
+                    Start Monitoring
+                  </Button>
+                )
+              }
+            />
           ) : (
             <div className="max-h-[500px] overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-primary-500/40 scrollbar-track-transparent">
               {opportunities.map((opp, index) => (

@@ -1,58 +1,90 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { Card, CardHeader, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { StatusIndicator } from '@/components/ui/StatusIndicator';
-import { LoadingCard } from '@/components/ui/LoadingSpinner';
+import { LoadingCard, EmptyState } from '@/components/ui/LoadingSpinner';
 import { api } from '@/services/api';
 import type { MarketOverview } from '@/types/trading';
+import {
+  Globe,
+  RefreshCw,
+  TrendingUp,
+  TrendingDown,
+  Building2,
+  BarChart3,
+  Activity,
+  Minus,
+} from 'lucide-react';
 
 export function MarketPage() {
   const [loading, setLoading] = useState(false);
   const [overview, setOverview] = useState<MarketOverview | null>(null);
+  const [initialLoad, setInitialLoad] = useState(true);
 
-  const handleRefresh = async () => {
+  const handleRefresh = async (showToast = true) => {
     setLoading(true);
     try {
       const data = await api.getMarketOverview();
       setOverview(data);
-      toast.success('Market data refreshed successfully');
+      if (showToast) {
+        toast.success('Market data refreshed successfully');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       toast.error(`Failed to refresh market data: ${message}`);
     } finally {
       setLoading(false);
+      setInitialLoad(false);
     }
   };
 
+  // Auto-fetch market data on mount
+  useEffect(() => {
+    handleRefresh(false);
+  }, []);
+
   const sentimentColor = overview?.marketSentiment === 'BULLISH' ? 'success' : overview?.marketSentiment === 'BEARISH' ? 'danger' : 'warning';
+  const SentimentIcon = overview?.marketSentiment === 'BULLISH' ? TrendingUp : overview?.marketSentiment === 'BEARISH' ? TrendingDown : Minus;
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      role="tabpanel"
+      id="panel-market"
+      aria-labelledby="tab-market"
     >
       <Card>
-        <CardHeader icon="🌍">Market Sentiment</CardHeader>
+        <CardHeader icon={<Globe className="w-5 h-5" />}>Market Sentiment</CardHeader>
         <CardContent>
           <div className="mb-6">
             <Button
               variant="primary"
-              onClick={handleRefresh}
+              onClick={() => handleRefresh(true)}
               loading={loading}
             >
+              <RefreshCw className="w-4 h-4" aria-hidden="true" />
               Refresh Market Data
             </Button>
           </div>
 
-          {loading ? (
-            <LoadingCard message="📊 Analyzing market sentiment..." />
+          {loading && initialLoad ? (
+            <LoadingCard message="Analyzing market sentiment..." />
           ) : !overview ? (
-            <div className="text-center py-12 text-gray-400 italic">
-              Click Refresh to get market sentiment
-            </div>
+            <EmptyState
+              variant="opportunities"
+              title="No Market Data"
+              description="Click Refresh to get the latest market sentiment analysis and sector breakdowns."
+              action={
+                <Button variant="primary" size="sm" onClick={() => handleRefresh(true)}>
+                  <RefreshCw className="w-4 h-4" aria-hidden="true" />
+                  Refresh Now
+                </Button>
+              }
+            />
           ) : (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -60,7 +92,7 @@ export function MarketPage() {
               className="space-y-6"
             >
               {/* Sentiment Stats */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
                 <StatusIndicator
                   label="Overall Sentiment"
                   value={overview.marketSentiment}
@@ -86,10 +118,10 @@ export function MarketPage() {
 
               {/* Top Sectors */}
               {overview.topSectors.length > 0 && (
-                <div className="bg-dark-bg/60 rounded-lg p-6 border border-dark-border">
-                  <h4 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <span>🏭</span>
-                    <span>Active Sectors</span>
+                <div className="bg-dark-bg/60 rounded-lg p-4 sm:p-6 border border-dark-border">
+                  <h4 className="flex items-center gap-2 text-lg font-semibold text-dark-text-primary mb-4">
+                    <Building2 className="w-5 h-5 text-primary-400" aria-hidden="true" />
+                    Active Sectors
                   </h4>
                   <div className="space-y-3">
                     {overview.topSectors.map((sector, index) => (
@@ -100,12 +132,16 @@ export function MarketPage() {
                         transition={{ delay: index * 0.1 }}
                         className="flex items-center justify-between p-3 bg-dark-surface rounded-lg border border-dark-border hover:border-dark-border-hover transition-all"
                       >
-                        <span className="text-gray-300 font-medium">{sector.sector}</span>
+                        <span className="text-dark-text-secondary font-medium">{sector.sector}</span>
                         <div className="flex items-center gap-3">
-                          <span className="text-sm text-gray-400">{sector.signalCount} signals</span>
-                          <div className="w-32 h-2 bg-dark-bg rounded-full overflow-hidden">
+                          <span className="text-sm text-dark-text-tertiary">{sector.signalCount} signals</span>
+                          <div
+                            className="w-24 sm:w-32 h-2 bg-dark-bg rounded-full overflow-hidden"
+                            role="img"
+                            aria-label={`${sector.sector}: ${sector.signalCount} signals`}
+                          >
                             <div
-                              className="h-full bg-gradient-to-r from-primary-500 to-success-500"
+                              className="h-full bg-gradient-to-r from-primary-500 to-success-500 transition-all duration-500"
                               style={{
                                 width: `${Math.min((sector.signalCount / Math.max(...overview.topSectors.map(s => s.signalCount))) * 100, 100)}%`,
                               }}
@@ -119,29 +155,42 @@ export function MarketPage() {
               )}
 
               {/* Market Summary */}
-              <div className="bg-dark-bg/60 rounded-lg p-6 border border-dark-border">
-                <h4 className="text-lg font-semibold text-white mb-4">Market Summary</h4>
-                <div className="space-y-2 text-sm">
-                  <p className="text-gray-400">
-                    The current market sentiment is{' '}
-                    <span className={`font-bold ${sentimentColor === 'success' ? 'text-success-500' : sentimentColor === 'danger' ? 'text-danger-500' : 'text-warning-500'}`}>
-                      {overview.marketSentiment}
+              <div className="bg-dark-bg/60 rounded-lg p-4 sm:p-6 border border-dark-border">
+                <h4 className="flex items-center gap-2 text-lg font-semibold text-dark-text-primary mb-4">
+                  <BarChart3 className="w-5 h-5 text-primary-400" aria-hidden="true" />
+                  Market Summary
+                </h4>
+                <div className="space-y-3 text-sm">
+                  <p className="flex items-start gap-2 text-dark-text-tertiary">
+                    <Activity className="w-4 h-4 mt-0.5 flex-shrink-0" aria-hidden="true" />
+                    <span>
+                      The current market sentiment is{' '}
+                      <span className={`font-bold ${sentimentColor === 'success' ? 'text-success-400' : sentimentColor === 'danger' ? 'text-danger-400' : 'text-warning-400'}`}>
+                        {overview.marketSentiment}
+                      </span>
+                      {' '}based on analysis of {overview.totalAnalyzed} stocks.
                     </span>
-                    {' '}based on analysis of {overview.totalAnalyzed} stocks.
                   </p>
-                  <p className="text-gray-400">
-                    There are {overview.bullishSignals} bullish signals and {overview.bearishSignals} bearish signals in the market.
+                  <p className="flex items-start gap-2 text-dark-text-tertiary">
+                    <SentimentIcon className="w-4 h-4 mt-0.5 flex-shrink-0" aria-hidden="true" />
+                    <span>
+                      There are <span className="text-success-400 font-medium">{overview.bullishSignals} bullish</span> signals
+                      and <span className="text-danger-400 font-medium">{overview.bearishSignals} bearish</span> signals in the market.
+                    </span>
                   </p>
                   {overview.bullishSignals > overview.bearishSignals ? (
-                    <p className="text-success-400 mt-3">
+                    <p className="flex items-center gap-2 text-success-400 mt-4 p-3 bg-success-500/10 rounded-lg border border-success-500/20">
+                      <TrendingUp className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                       The market shows positive momentum with more bullish signals than bearish.
                     </p>
                   ) : overview.bearishSignals > overview.bullishSignals ? (
-                    <p className="text-danger-400 mt-3">
+                    <p className="flex items-center gap-2 text-danger-400 mt-4 p-3 bg-danger-500/10 rounded-lg border border-danger-500/20">
+                      <TrendingDown className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                       The market shows negative momentum with more bearish signals than bullish.
                     </p>
                   ) : (
-                    <p className="text-warning-400 mt-3">
+                    <p className="flex items-center gap-2 text-warning-400 mt-4 p-3 bg-warning-500/10 rounded-lg border border-warning-500/20">
+                      <Minus className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                       The market is balanced with equal bullish and bearish signals.
                     </p>
                   )}

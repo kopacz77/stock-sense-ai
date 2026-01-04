@@ -10,6 +10,13 @@ try {
   console.warn("Keytar not available, using file-based key storage (less secure)");
 }
 
+// Security constants for PBKDF2 key derivation
+const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_KEY_LENGTH = 32;
+const PBKDF2_DIGEST = "sha256";
+const SALT_LENGTH = 16;
+const AUTH_TAG_LENGTH = 16;
+
 const ConfigSchema = z.object({
   apis: z.object({
     alphaVantage: z.string().min(1, "Alpha Vantage API key is required"),
@@ -83,13 +90,12 @@ export class SecureConfig {
         console.warn("Failed to access keychain, falling back to file storage");
       }
     }
-    
-    // Fallback to file-based storage
+
+    // Fallback to file-based storage with PBKDF2 + AES-GCM encryption
     try {
       const keyFile = ".key";
       const encryptedKey = await fs.readFile(keyFile, "utf8");
-      // Use a simple XOR obfuscation (not secure, but better than plaintext)
-      return this.deobfuscateKey(encryptedKey);
+      return this.decryptKeyFromStorage(encryptedKey);
     } catch {
       return null;
     }
@@ -104,36 +110,67 @@ export class SecureConfig {
         console.warn("Failed to save to keychain, falling back to file storage");
       }
     }
-    
-    // Fallback to file-based storage with obfuscation
+
+    // Fallback to file-based storage with PBKDF2 + AES-GCM encryption
     const keyFile = ".key";
-    const obfuscatedKey = this.obfuscateKey(key);
-    await fs.writeFile(keyFile, obfuscatedKey, { mode: 0o600 });
+    const encryptedKey = this.encryptKeyForStorage(key);
+    await fs.writeFile(keyFile, encryptedKey, { mode: 0o600 });
   }
 
-  private obfuscateKey(key: string): string {
-    // Simple XOR obfuscation (not cryptographically secure)
-    const obfuscator = "StockSenseAI2024";
-    let result = "";
-    for (let i = 0; i < key.length; i++) {
-      result += String.fromCharCode(
-        key.charCodeAt(i) ^ obfuscator.charCodeAt(i % obfuscator.length)
-      );
-    }
-    return Buffer.from(result).toString("base64");
+  /**
+   * Derive encryption key from master key using PBKDF2
+   * This provides proper key derivation instead of simple XOR obfuscation
+   */
+  private deriveKey(masterKey: string, salt: Buffer): Buffer {
+    return crypto.pbkdf2Sync(
+      masterKey,
+      salt,
+      PBKDF2_ITERATIONS,
+      PBKDF2_KEY_LENGTH,
+      PBKDF2_DIGEST
+    );
   }
 
-  private deobfuscateKey(obfuscatedKey: string): string {
-    // Reverse the XOR obfuscation
-    const obfuscator = "StockSenseAI2024";
-    const data = Buffer.from(obfuscatedKey, "base64").toString();
-    let result = "";
-    for (let i = 0; i < data.length; i++) {
-      result += String.fromCharCode(
-        data.charCodeAt(i) ^ obfuscator.charCodeAt(i % obfuscator.length)
-      );
+  /**
+   * Encrypt key for file storage using PBKDF2 + AES-256-GCM
+   * Format: salt:iv:authTag:ciphertext (all hex encoded)
+   */
+  private encryptKeyForStorage(key: string): string {
+    const salt = crypto.randomBytes(SALT_LENGTH);
+    const derivedKey = this.deriveKey(this.APP_NAME, salt);
+    const iv = crypto.randomBytes(12); // GCM recommended IV size
+
+    const cipher = crypto.createCipheriv("aes-256-gcm", derivedKey, iv);
+    let encrypted = cipher.update(key, "utf8", "hex");
+    encrypted += cipher.final("hex");
+    const authTag = cipher.getAuthTag();
+
+    return `${salt.toString("hex")}:${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted}`;
+  }
+
+  /**
+   * Decrypt key from file storage using PBKDF2 + AES-256-GCM
+   */
+  private decryptKeyFromStorage(encryptedData: string): string {
+    const parts = encryptedData.split(":");
+    if (parts.length !== 4) {
+      throw new Error("Invalid encrypted key format");
     }
-    return result;
+
+    const [saltHex, ivHex, authTagHex, ciphertext] = parts as [string, string, string, string];
+    const salt = Buffer.from(saltHex, "hex");
+    const iv = Buffer.from(ivHex, "hex");
+    const authTag = Buffer.from(authTagHex, "hex");
+
+    const derivedKey = this.deriveKey(this.APP_NAME, salt);
+
+    const decipher = crypto.createDecipheriv("aes-256-gcm", derivedKey, iv);
+    decipher.setAuthTag(authTag);
+
+    let decrypted = decipher.update(ciphertext, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+
+    return decrypted;
   }
 
   private async loadConfig(): Promise<void> {
@@ -227,24 +264,61 @@ export class SecureConfig {
     console.log("✅ Configuration saved securely");
   }
 
+  /**
+   * Encrypt config data using AES-256-GCM (authenticated encryption)
+   * Format: iv:authTag:ciphertext (all hex encoded)
+   */
   private encrypt(text: string, key: string): string {
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv("aes-256-cbc", Buffer.from(key, "hex"), iv);
+    const iv = crypto.randomBytes(12); // GCM recommended IV size is 12 bytes
+    const cipher = crypto.createCipheriv("aes-256-gcm", Buffer.from(key, "hex"), iv);
 
     let encrypted = cipher.update(text, "utf8", "hex");
     encrypted += cipher.final("hex");
+    const authTag = cipher.getAuthTag();
 
-    return `${iv.toString("hex")}:${encrypted}`;
+    return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted}`;
   }
 
+  /**
+   * Decrypt config data using AES-256-GCM (authenticated encryption)
+   * Verifies authenticity via auth tag to prevent tampering
+   */
   private decrypt(encryptedText: string, key: string): string {
+    const parts = encryptedText.split(":");
+
+    // Support legacy CBC format (2 parts) for backward compatibility
+    if (parts.length === 2) {
+      return this.decryptLegacyCBC(encryptedText, key);
+    }
+
+    if (parts.length !== 3) {
+      throw new Error("Invalid encrypted data format");
+    }
+
+    const [ivHex, authTagHex, encrypted] = parts as [string, string, string];
+    const iv = Buffer.from(ivHex, "hex");
+    const authTag = Buffer.from(authTagHex, "hex");
+
+    const decipher = crypto.createDecipheriv("aes-256-gcm", Buffer.from(key, "hex"), iv);
+    decipher.setAuthTag(authTag);
+
+    let decrypted = decipher.update(encrypted, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+
+    return decrypted;
+  }
+
+  /**
+   * Decrypt legacy AES-CBC encrypted data for backward compatibility
+   * @deprecated Will be removed in future version
+   */
+  private decryptLegacyCBC(encryptedText: string, key: string): string {
     const [ivHex, encrypted] = encryptedText.split(":");
     if (!ivHex || !encrypted) {
       throw new Error("Invalid encrypted data format");
     }
 
     const iv = Buffer.from(ivHex, "hex");
-
     const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(key, "hex"), iv);
 
     let decrypted = decipher.update(encrypted, "hex", "utf8");

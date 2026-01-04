@@ -12,10 +12,10 @@ export function Card({ children, hover = true, glow = true, className, ...props 
     <div
       className={cn(
         // Base glassmorphic styles
-        'relative',
+        'relative group',
         'bg-dark-surface backdrop-blur-xl',
         'rounded-2xl',
-        'p-6',
+        'p-4 sm:p-6',
         'border border-dark-border',
         'shadow-glass',
         // Transitions
@@ -34,7 +34,10 @@ export function Card({ children, hover = true, glow = true, className, ...props 
     >
       {/* Gradient top border on hover */}
       {glow && (
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-primary-500 via-success-500 to-warning-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+        <div
+          className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-primary-500 via-success-500 to-warning-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+          aria-hidden="true"
+        />
       )}
       {children}
     </div>
@@ -52,8 +55,12 @@ export function CardHeader({ children, icon, className, ...props }: CardHeaderPr
       className={cn('flex items-center gap-2 mb-4', className)}
       {...props}
     >
-      {icon && <span className="text-xl">{icon}</span>}
-      <h2 className="text-xl font-semibold text-white">{children}</h2>
+      {icon && (
+        <span className="text-primary-400" aria-hidden="true">
+          {icon}
+        </span>
+      )}
+      <h2 className="text-lg sm:text-xl font-semibold text-dark-text-primary">{children}</h2>
     </div>
   );
 }
@@ -64,7 +71,7 @@ export interface CardContentProps extends HTMLAttributes<HTMLDivElement> {
 
 export function CardContent({ children, className, ...props }: CardContentProps) {
   return (
-    <div className={cn('text-gray-300', className)} {...props}>
+    <div className={cn('text-dark-text-secondary', className)} {...props}>
       {children}
     </div>
   );

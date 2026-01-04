@@ -6,6 +6,7 @@
 // Metrics
 export { VaRCalculator } from "./metrics/var-calculator.js";
 export { CVaRCalculator } from "./metrics/cvar-calculator.js";
+export { GARCHVolatilityModel } from "./metrics/garch-volatility.js";
 
 // Correlation
 export { CorrelationMatrixCalculator } from "./correlation/correlation-matrix.js";

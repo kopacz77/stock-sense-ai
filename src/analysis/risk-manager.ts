@@ -143,9 +143,8 @@ export class RiskManager {
 
     if (action === "BUY") {
       return entryPrice - stopDistance;
-    } else {
-      return entryPrice + stopDistance;
     }
+    return entryPrice + stopDistance;
   }
 
   private calculateTakeProfit(
@@ -157,15 +156,50 @@ export class RiskManager {
 
     if (action === "BUY") {
       return entryPrice + profitDistance;
-    } else {
-      return entryPrice - profitDistance;
     }
+    return entryPrice - profitDistance;
   }
 
+  /**
+   * Estimate ATR when actual ATR data is not available.
+   * Uses volatility-based estimation with asset class considerations.
+   *
+   * IMPORTANT: This is a fallback estimation. Always prefer passing actual ATR
+   * calculated from historical price data for accurate position sizing.
+   *
+   * @param symbol - Stock symbol for asset-class based volatility adjustment
+   * @param currentPrice - Current stock price
+   * @returns Estimated ATR value
+   */
   private async estimateATR(symbol: string, currentPrice: number): Promise<number> {
-    // Simplified ATR estimation based on price
-    // In production, this would use historical data
-    return currentPrice * 0.02; // Assume 2% of price as ATR
+    // Volatility estimates by asset class (based on historical market data)
+    // These are conservative estimates to prevent excessive position sizing
+    const volatilityEstimates: Record<string, number> = {
+      // High volatility tech stocks
+      TSLA: 0.045, NVDA: 0.04, AMD: 0.04, COIN: 0.05, MSTR: 0.06,
+      // Large-cap tech (moderate-high volatility)
+      AAPL: 0.025, MSFT: 0.022, GOOGL: 0.025, AMZN: 0.028, META: 0.032,
+      // Financials (moderate volatility)
+      JPM: 0.02, BAC: 0.022, GS: 0.025, WFC: 0.022,
+      // Healthcare (lower volatility)
+      JNJ: 0.015, PFE: 0.02, UNH: 0.018,
+      // Energy (moderate-high volatility)
+      XOM: 0.022, CVX: 0.022, COP: 0.028,
+      // Consumer staples (low volatility)
+      PG: 0.012, KO: 0.012, WMT: 0.015,
+      // Default for unknown symbols - use conservative 3% estimate
+      DEFAULT: 0.03,
+    };
+
+    // Get volatility estimate for this symbol or use default
+    const volatilityPercent = volatilityEstimates[symbol.toUpperCase()] ?? volatilityEstimates.DEFAULT ?? 0.02;
+
+    // Log warning that estimation is being used
+    console.warn(
+      `⚠️ ATR estimation used for ${symbol}. For accurate position sizing, provide actual ATR from historical data.`
+    );
+
+    return currentPrice * volatilityPercent;
   }
 
   validatePortfolioRisk(positions: Position[], accountBalance: number): PortfolioRiskAssessment {
@@ -174,9 +208,9 @@ export class RiskManager {
     let totalRisk = 0;
 
     // Calculate total risk
-    positions.forEach((position) => {
+    for (const position of positions) {
       totalRisk += position.riskAmount;
-    });
+    }
 
     const riskPercentage = totalRisk / accountBalance;
 

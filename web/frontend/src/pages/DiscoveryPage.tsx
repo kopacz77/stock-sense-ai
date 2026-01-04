@@ -5,10 +5,11 @@ import { Card, CardHeader, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
-import { LoadingCard } from '@/components/ui/LoadingSpinner';
+import { LoadingCard, EmptyState } from '@/components/ui/LoadingSpinner';
 import { OpportunityCard } from '@/components/opportunities/OpportunityCard';
 import { api } from '@/services/api';
 import type { Opportunity } from '@/types/trading';
+import { Compass, TrendingUp, Building2, Sparkles, Search } from 'lucide-react';
 
 const SECTOR_OPTIONS = [
   { value: '', label: 'Select Sector' },
@@ -66,7 +67,7 @@ export function DiscoveryPage() {
   };
 
   const getTitle = () => {
-    if (!discoveryType) return 'Click a discovery button to find opportunities!';
+    if (!discoveryType) return 'Select a discovery method above';
     if (discoveryType === 'high-revenue') return `High-Revenue Opportunities (${results.length} found)`;
     if (discoveryType === 'trending') return `Trending Stocks (${results.length} found)`;
     return `${sector} Sector (${results.length} found)`;
@@ -77,9 +78,12 @@ export function DiscoveryPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      role="tabpanel"
+      id="panel-discovery"
+      aria-labelledby="tab-discovery"
     >
       <Card>
-        <CardHeader icon="🔍">Stock Discovery</CardHeader>
+        <CardHeader icon={<Compass className="w-5 h-5" />}>Stock Discovery</CardHeader>
         <CardContent>
           {/* Controls */}
           <div className="mb-6 space-y-4">
@@ -88,20 +92,25 @@ export function DiscoveryPage() {
                 variant="primary"
                 onClick={() => runDiscovery('high-revenue')}
                 loading={loading && discoveryType === 'high-revenue'}
+                disabled={loading}
               >
+                <Sparkles className="w-4 h-4" aria-hidden="true" />
                 High Revenue
               </Button>
               <Button
                 variant="primary"
                 onClick={() => runDiscovery('trending')}
                 loading={loading && discoveryType === 'trending'}
+                disabled={loading}
               >
+                <TrendingUp className="w-4 h-4" aria-hidden="true" />
                 Trending
               </Button>
               <Select
                 value={sector}
                 onChange={(e) => setSector(e.target.value)}
-                className="w-48"
+                className="w-40 sm:w-48"
+                aria-label="Select sector"
               >
                 {SECTOR_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -113,16 +122,18 @@ export function DiscoveryPage() {
                 variant="primary"
                 onClick={() => runDiscovery('sector', sector)}
                 loading={loading && discoveryType === 'sector'}
-                disabled={!sector}
+                disabled={!sector || loading}
               >
+                <Building2 className="w-4 h-4" aria-hidden="true" />
                 Discover Sector
               </Button>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
               <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-300">Confidence:</label>
+                <label htmlFor="discovery-confidence" className="text-sm text-dark-text-secondary">Confidence:</label>
                 <Input
+                  id="discovery-confidence"
                   type="number"
                   value={confidence}
                   onChange={(e) => setConfidence(e.target.value)}
@@ -130,11 +141,12 @@ export function DiscoveryPage() {
                   max="95"
                   className="w-20"
                 />
-                <span className="text-sm text-gray-400">%</span>
+                <span className="text-sm text-dark-text-tertiary">%</span>
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-300">Max Results:</label>
+                <label htmlFor="max-results" className="text-sm text-dark-text-secondary">Max Results:</label>
                 <Input
+                  id="max-results"
                   type="number"
                   value={maxResults}
                   onChange={(e) => setMaxResults(e.target.value)}
@@ -148,14 +160,23 @@ export function DiscoveryPage() {
 
           {/* Results */}
           {loading ? (
-            <LoadingCard message="🔍 Discovering opportunities..." />
+            <LoadingCard message="Discovering opportunities..." />
           ) : results.length === 0 ? (
-            <div className="text-center py-12 text-gray-400 italic">
-              {getTitle()}
-            </div>
+            <EmptyState
+              variant="search"
+              title={discoveryType ? 'No Opportunities Found' : 'Start Discovery'}
+              description={
+                discoveryType
+                  ? 'Try lowering the confidence threshold or selecting a different sector.'
+                  : 'Click one of the discovery buttons above to find trading opportunities.'
+              }
+            />
           ) : (
             <div>
-              <h3 className="text-lg font-semibold text-white mb-4">🎯 {getTitle()}</h3>
+              <h3 className="flex items-center gap-2 text-lg font-semibold text-dark-text-primary mb-4">
+                <Search className="w-5 h-5 text-primary-400" aria-hidden="true" />
+                {getTitle()}
+              </h3>
               <div className="max-h-[600px] overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-primary-500/40 scrollbar-track-transparent">
                 {results.map((result, index) => (
                   <OpportunityCard key={`${result.symbol}-${index}`} opportunity={result} index={index} />
