@@ -570,7 +570,13 @@ export class WebServer {
   }
 
   async start(): Promise<void> {
+    // Initialize config first so API keys are available
     await this.config.initialize();
+
+    // Now initialize market data service with the loaded config
+    await this.marketData.initialize();
+
+    // Config and market data service are now initialized
 
     return new Promise((resolve) => {
       this.server.listen(this.port, () => {
