@@ -7,6 +7,8 @@ import express, { type Express, type Request, type Response } from "express";
 import cors from "cors";
 import { PaperTradingEngine } from "../engine/paper-trading-engine.js";
 import type { PaperTradingConfig } from "../types/paper-trading-types.js";
+import { StrategyRegistry, getStrategy } from "../../strategies/strategy-registry.js";
+import { StrategyAdapter } from "../adapters/strategy-adapter.js";
 
 /**
  * Paper Trading API Server
