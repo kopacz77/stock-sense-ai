@@ -57,26 +57,26 @@
 
 | REQ-ID | Phase | Plan | Status |
 |--------|-------|------|--------|
-| BACK-01 | — | — | pending |
-| BACK-02 | — | — | pending |
-| BACK-03 | — | — | pending |
-| BACK-04 | — | — | pending |
-| PAPER-01 | — | — | pending |
-| PAPER-02 | — | — | pending |
-| PAPER-03 | — | — | pending |
-| PAPER-04 | — | — | pending |
-| RISK-01 | — | — | pending |
-| AUTH-01 | — | — | pending |
-| AUTH-02 | — | — | pending |
-| AUTH-03 | — | — | pending |
-| TEST-01 | — | — | pending |
-| TEST-02 | — | — | pending |
-| TEST-03 | — | — | pending |
-| TEST-04 | — | — | pending |
-| QUAL-01 | — | — | pending |
-| QUAL-02 | — | — | pending |
-| QUAL-03 | — | — | pending |
-| QUAL-04 | — | — | pending |
+| BACK-01 | Phase 1: Backtesting Fix | — | pending |
+| BACK-02 | Phase 1: Backtesting Fix | — | pending |
+| BACK-03 | Phase 1: Backtesting Fix | — | pending |
+| BACK-04 | Phase 1: Backtesting Fix | — | pending |
+| PAPER-01 | Phase 2: Paper Trading | — | pending |
+| PAPER-02 | Phase 2: Paper Trading | — | pending |
+| PAPER-03 | Phase 2: Paper Trading | — | pending |
+| PAPER-04 | Phase 2: Paper Trading | — | pending |
+| AUTH-01 | Phase 3: Redis Infrastructure | — | pending |
+| AUTH-02 | Phase 3: Redis Infrastructure | — | pending |
+| AUTH-03 | Phase 3: Redis Infrastructure | — | pending |
+| RISK-01 | Phase 4: Risk Integration | — | pending |
+| QUAL-01 | Phase 5: Code Quality | — | pending |
+| QUAL-02 | Phase 5: Code Quality | — | pending |
+| QUAL-03 | Phase 5: Code Quality | — | pending |
+| QUAL-04 | Phase 5: Code Quality | — | pending |
+| TEST-01 | Phase 6: Testing | — | pending |
+| TEST-02 | Phase 6: Testing | — | pending |
+| TEST-03 | Phase 6: Testing | — | pending |
+| TEST-04 | Phase 6: Testing | — | pending |
 
 ---
 
