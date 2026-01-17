@@ -273,39 +273,42 @@ export class OrderManager {
 
   /**
    * Check if trailing stop should trigger
+   * Uses peak price retreat logic: triggers when price retreats X% from peak
+   *
+   * For SELL orders (long positions):
+   *   - peakPrice tracks the highest price since order creation
+   *   - Trigger when price drops trailingPercent% below peakPrice
+   *
+   * For BUY orders (short positions):
+   *   - peakPrice tracks the lowest price since order creation
+   *   - Trigger when price rises trailingPercent% above peakPrice
    */
   private checkTrailingStop(
     order: PaperOrder,
     marketData: MarketDataUpdate
   ): boolean {
-    // Trailing stops need state tracking - simplified for now
-    // In production, this would track the highest/lowest price since order creation
     const price = marketData.price;
+    const peakPrice = order.peakPrice ?? price;
 
     if (order.trailingPercent) {
-      // Percentage-based trailing stop
-      const trailAmount = price * (order.trailingPercent / 100);
-      const stopPrice =
-        order.side === "SELL" ? price - trailAmount : price + trailAmount;
-
-      // For sell: trigger if price drops by trailing%
-      // For buy: trigger if price rises by trailing%
       if (order.side === "SELL") {
-        return price <= stopPrice;
+        // Long position: trigger if price drops trailingPercent below peak
+        const triggerPrice = peakPrice * (1 - order.trailingPercent / 100);
+        return price <= triggerPrice;
       } else {
-        return price >= stopPrice;
+        // Short position: trigger if price rises trailingPercent above trough
+        const triggerPrice = peakPrice * (1 + order.trailingPercent / 100);
+        return price >= triggerPrice;
       }
     } else if (order.trailingAmount) {
-      // Fixed amount trailing stop
-      const stopPrice =
-        order.side === "SELL"
-          ? price - order.trailingAmount
-          : price + order.trailingAmount;
-
       if (order.side === "SELL") {
-        return price <= stopPrice;
+        // Long position: trigger if price drops trailingAmount below peak
+        const triggerPrice = peakPrice - order.trailingAmount;
+        return price <= triggerPrice;
       } else {
-        return price >= stopPrice;
+        // Short position: trigger if price rises trailingAmount above trough
+        const triggerPrice = peakPrice + order.trailingAmount;
+        return price >= triggerPrice;
       }
     }
 
