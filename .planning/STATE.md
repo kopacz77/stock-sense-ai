@@ -27,13 +27,12 @@
 
 ## Active Work
 
-**Current Focus**: Phase 2 - Paper Trading (Plan 02-02 COMPLETE)
+**Current Focus**: Phase 2 - Paper Trading (Plan 02-03 COMPLETE)
 
 **Blocking Issues**: None
 
 **Next Actions**:
-1. Execute Plan 02-03: Trailing Stop Fixes
-2. Execute Plan 02-04: Order Type Verification
+1. Execute Plan 02-04: Order Type Verification
 
 ---
 
@@ -49,6 +48,7 @@
 | 2026-01-17 | Phase 01 | Backtesting Fix phase COMPLETE |
 | 2026-01-17 | Plan 02-01 | Real market data integration for paper trading (5 commits) |
 | 2026-01-17 | Plan 02-02 | Strategy loading API - 5 commits (b32daf8, 0231f4b, 65859d6, e92f30e, 5ea9573) |
+| 2026-01-17 | Plan 02-03 | Trailing stop fixes - 5 commits (ba2dba6, c6641a5, 0379127, de458c1, 3341ff3) |
 
 ---
 
@@ -59,11 +59,34 @@
 | Test Coverage | ~32% | 80% |
 | Any Types | Unknown | 0 |
 | Phases Complete | 1/6 | 6/6 |
-| Phase 2 Plans | 2/4 | 4/4 |
+| Phase 2 Plans | 3/4 | 4/4 |
 
 ---
 
 ## Decisions
+
+### 2026-01-17: Trailing Stop Implementation (Plan 02-03)
+
+**Decision**: Implement proper peak price tracking for trailing stops using order-level peakPrice field.
+
+**Rationale**:
+- Original checkTrailingStop() compared current price to itself (always false)
+- Trailing stops must track peak price since order creation
+- Stop price should only move in favorable direction (up for longs, down for shorts)
+- Position interface needed trailing configuration fields for engine integration
+
+**Implementation**:
+- Added peakPrice field to PaperOrder interface
+- Added trailingAmount/trailingPercent fields to PaperPosition interface
+- Fixed checkTrailingStop() to trigger on retreat from peak price
+- Fixed updateTrailingStop() to only update when price moves favorably
+- Added currentPrice parameter to createOrder() for initialization
+- Enabled trailing stop updates in engine's checkStopLossesAndTargets()
+
+**Verification**:
+- 9 test cases covering long/short positions, percentage/fixed trailing
+- Tests verify peak tracking, stop adjustment, and trigger conditions
+- All tests pass
 
 ### 2026-01-17: Strategy Loading API (Plan 02-02)
 
@@ -120,7 +143,7 @@
 - Phase 2 Paper Trading IN_PROGRESS:
   - Plan 02-01: COMPLETE - Real market data integration
   - Plan 02-02: COMPLETE - Strategy loading API (POST /api/paper/start returns 200)
-  - Plan 02-03: PENDING - Trailing stop fixes
+  - Plan 02-03: COMPLETE - Trailing stop fixes (peak price tracking, trigger logic, 9 tests)
   - Plan 02-04: PENDING - Order type verification
 - Token blacklist and rate limiting are in-memory (lost on restart)
 - Risk commands use placeholder data
