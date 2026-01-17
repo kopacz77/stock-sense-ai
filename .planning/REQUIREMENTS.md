@@ -3,10 +3,10 @@
 ## v1 Requirements
 
 ### Backtesting
-- [ ] **BACK-01**: User can run backtests via CLI with `backtest run` command
-- [ ] **BACK-02**: User can optimize strategy parameters via grid search
-- [ ] **BACK-03**: User can validate strategies with walk-forward analysis
-- [ ] **BACK-04**: User can view performance reports with 30+ metrics and equity curves
+- [x] **BACK-01**: User can run backtests via CLI with `backtest run` command
+- [x] **BACK-02**: User can optimize strategy parameters via grid search
+- [x] **BACK-03**: User can validate strategies with walk-forward analysis
+- [x] **BACK-04**: User can view performance reports with 30+ metrics and equity curves
 
 ### Paper Trading
 - [ ] **PAPER-01**: Paper trading engine fetches real market data from existing providers
@@ -57,10 +57,10 @@
 
 | REQ-ID | Phase | Plan | Status |
 |--------|-------|------|--------|
-| BACK-01 | Phase 1: Backtesting Fix | — | pending |
-| BACK-02 | Phase 1: Backtesting Fix | — | pending |
-| BACK-03 | Phase 1: Backtesting Fix | — | pending |
-| BACK-04 | Phase 1: Backtesting Fix | — | pending |
+| BACK-01 | Phase 1: Backtesting Fix | 01-01 | complete |
+| BACK-02 | Phase 1: Backtesting Fix | 01-03 | complete |
+| BACK-03 | Phase 1: Backtesting Fix | 01-03 | complete |
+| BACK-04 | Phase 1: Backtesting Fix | 01-04 | complete |
 | PAPER-01 | Phase 2: Paper Trading | — | pending |
 | PAPER-02 | Phase 2: Paper Trading | — | pending |
 | PAPER-03 | Phase 2: Paper Trading | — | pending |
@@ -80,4 +80,4 @@
 
 ---
 
-*Last updated: 2026-01-16*
+*Last updated: 2026-01-17*
