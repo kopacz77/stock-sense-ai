@@ -15,8 +15,8 @@ import { MeanReversionStrategy } from '../strategies/mean-reversion-strategy.js'
 import { MomentumStrategy } from '../strategies/momentum-strategy.js';
 import { FixedBPSSlippageModel } from '../backtesting/execution/slippage-models.js';
 import { FixedCommissionModel } from '../backtesting/execution/commission-models.js';
-import type { BacktestConfig, BacktestStrategy } from '../backtesting/types/backtest-types.js';
-import type { HistoricalData } from '../types/trading.js';
+import type { BacktestConfig, BacktestStrategy, HistoricalDataPoint, Bar } from '../backtesting/types/backtest-types.js';
+import type { HistoricalData, Signal } from '../types/trading.js';
 
 /**
  * Strategy adapter to convert trading strategies to backtest strategies
@@ -33,12 +33,40 @@ class StrategyAdapter implements BacktestStrategy {
 
   async generateSignal(
     symbol: string,
-    currentData: any,
-    historicalData: any[]
-  ): Promise<any> {
-    // This is a simplified adapter - in production you'd need more sophisticated conversion
-    const signal = await this.strategy.analyze(symbol, historicalData as HistoricalData[]);
+    _currentData: HistoricalDataPoint,
+    historicalData: HistoricalDataPoint[]
+  ): Promise<Signal> {
+    // Convert HistoricalDataPoint[] to HistoricalData[] for strategy
+    const convertedData: HistoricalData[] = historicalData.map(point => ({
+      date: point.timestamp.toISOString().split('T')[0] ?? '',
+      open: point.open,
+      high: point.high,
+      low: point.low,
+      close: point.close,
+      volume: point.volume,
+    }));
+
+    const signal = await this.strategy.analyze(symbol, convertedData);
     return signal;
+  }
+
+  async onBar(
+    symbol: string,
+    _bar: HistoricalDataPoint,
+    historicalData: HistoricalDataPoint[]
+  ): Promise<Signal | null> {
+    // Convert to HistoricalData format expected by strategies
+    const convertedData: HistoricalData[] = historicalData.map(point => ({
+      date: point.timestamp.toISOString().split('T')[0] ?? '',
+      open: point.open,
+      high: point.high,
+      low: point.low,
+      close: point.close,
+      volume: point.volume,
+    }));
+
+    const signal = await this.strategy.analyze(symbol, convertedData);
+    return signal.action === 'HOLD' ? null : signal;
   }
 
   async initialize(): Promise<void> {
@@ -140,7 +168,18 @@ export function registerBacktestCommands(program: Command): void {
           },
         }, strategyAdapter);
 
-        const result = await backtestEngine.run(symbol, historicalData as any);
+        // Convert HistoricalData[] to Bar[] for backtest engine
+        const bars: Bar[] = historicalData.map(h => ({
+          symbol: symbol.toUpperCase(),
+          timestamp: new Date(h.date),
+          open: h.open,
+          high: h.high,
+          low: h.low,
+          close: h.close,
+          volume: h.volume,
+        }));
+
+        const result = await backtestEngine.run(symbol, bars);
 
         spinner.succeed('Backtest complete!');
 
@@ -232,7 +271,18 @@ export function registerBacktestCommands(program: Command): void {
             },
           }, strategyAdapter);
 
-          const result = await backtestEngine.run(symbol, historicalData as any);
+          // Convert HistoricalData[] to Bar[] for backtest engine
+          const bars: Bar[] = historicalData.map(h => ({
+            symbol: symbol.toUpperCase(),
+            timestamp: new Date(h.date),
+            open: h.open,
+            high: h.high,
+            low: h.low,
+            close: h.close,
+            volume: h.volume,
+          }));
+
+          const result = await backtestEngine.run(symbol, bars);
           results.push({ name, result });
         }
 
