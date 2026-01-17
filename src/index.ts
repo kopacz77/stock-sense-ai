@@ -18,8 +18,7 @@ import { MonitoringService } from "./monitoring/monitoring-service.js";
 import { WebServer } from "./web/server.js";
 import type { Signal } from "./types/trading.js";
 import { registerBacktestDataCommands } from "./cli/backtest-data-commands.js";
-// TODO: Fix type mismatches in backtest-commands.ts before enabling
-// import { registerBacktestCommands } from "./cli/backtest-commands.js";
+import { registerBacktestCommands } from "./cli/backtest-commands.js";
 import { registerPaperTradingCommands } from "./cli/paper-trading-commands.js";
 import { createRiskCommands } from "./cli/risk-commands.js";
 
@@ -1027,8 +1026,7 @@ process.on("uncaughtException", (error) => {
 });
 
 // Register backtest commands
-// TODO: Fix type mismatches before enabling
-// registerBacktestCommands(program);
+registerBacktestCommands(program);
 registerBacktestDataCommands(program);
 
 // Register paper trading commands
