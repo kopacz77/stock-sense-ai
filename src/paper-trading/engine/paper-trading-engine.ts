@@ -201,28 +201,51 @@ export class PaperTradingEngine extends EventEmitter {
   }
 
   /**
-   * Fetch market data for symbols
-   * This is a placeholder - integrate with real market data provider
+   * Fetch market data for symbols using real market data providers
+   * Uses MarketDataService with fallback: Alpha Vantage -> Finnhub -> Yahoo Finance
    */
   private async fetchMarketData(
     symbols: string[]
   ): Promise<Map<string, MarketDataUpdate>> {
     const marketData = new Map<string, MarketDataUpdate>();
 
-    // TODO: Integrate with Alpha Vantage or Finnhub API
-    // For now, return mock data
-    for (const symbol of symbols) {
-      marketData.set(symbol, {
-        symbol,
-        timestamp: new Date(),
-        price: 100 + Math.random() * 10, // Mock price
-        volume: 1000000,
-        high: 105,
-        low: 95,
-        open: 100,
-        previousClose: 100,
-      });
+    // Use Promise.allSettled for parallel fetching - one failed symbol won't crash others
+    const fetchPromises = symbols.map(async (symbol) => {
+      try {
+        const data = await this.marketDataService.getFullAnalysisData(symbol);
+        const quote = data.quote;
+
+        // Convert MarketData to MarketDataUpdate format
+        const update: MarketDataUpdate = {
+          symbol: quote.symbol,
+          timestamp: quote.timestamp,
+          price: quote.price,
+          high: quote.high,
+          low: quote.low,
+          open: quote.open,
+          volume: quote.volume,
+          previousClose: quote.previousClose,
+        };
+
+        return { symbol, update, success: true as const };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.warn(`Failed to fetch market data for ${symbol}: ${errorMessage}`);
+        return { symbol, error: errorMessage, success: false as const };
+      }
+    });
+
+    const results = await Promise.allSettled(fetchPromises);
+
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value.success) {
+        marketData.set(result.value.symbol, result.value.update);
+      }
+      // Failed symbols are logged but don't prevent other symbols from updating
     }
+
+    this.dataFetchCount++;
+    this.lastDataFetch = new Date();
 
     return marketData;
   }
