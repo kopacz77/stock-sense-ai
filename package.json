@@ -62,6 +62,7 @@
     "@types/inquirer": "^9.0.8",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.19.9",
+    "@vitest/coverage-v8": "^1.6.1",
     "concurrently": "^9.2.1",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
