@@ -126,17 +126,54 @@ export class PaperTradingAPI {
     // Start trading (POST)
     this.app.post("/api/paper/start", async (req, res) => {
       try {
-        const { strategyName, symbols } = req.body;
+        const { strategyName, symbols, strategyParams } = req.body;
 
-        if (!strategyName || !symbols) {
-          return res.status(400).json({ error: "Strategy name and symbols required" });
+        // Validate required fields
+        if (!strategyName) {
+          return res.status(400).json({
+            error: "Strategy name is required",
+            availableStrategies: StrategyRegistry.getInstance().listStrategies(),
+          });
         }
 
-        // TODO: Load strategy dynamically
-        // For now, return error
-        return res.status(501).json({ error: "Start endpoint not fully implemented" });
+        if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
+          return res.status(400).json({
+            error: "Symbols array is required and must not be empty",
+            example: { strategyName: "mean-reversion", symbols: ["AAPL", "MSFT"] },
+          });
+        }
+
+        // Validate strategy exists
+        const registry = StrategyRegistry.getInstance();
+        if (!registry.hasStrategy(strategyName)) {
+          return res.status(400).json({
+            error: `Strategy '${strategyName}' not found`,
+            availableStrategies: registry.listStrategies(),
+          });
+        }
+
+        // Get strategy instance from registry
+        const strategy = getStrategy(strategyName, strategyParams);
+
+        // Create adapter to convert Strategy to BacktestStrategy interface
+        const backtestStrategy = new StrategyAdapter(strategy, strategyName);
+
+        // Start the paper trading engine with the strategy
+        await this.engine.start(backtestStrategy, symbols);
+
+        // Return success with status
+        const status = this.engine.getStatus();
+        return res.json({
+          success: true,
+          message: `Paper trading started with ${strategyName} strategy`,
+          strategy: strategyName,
+          symbols,
+          status,
+        });
       } catch (error) {
-        return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+        return res.status(500).json({
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     });
 
