@@ -27,14 +27,13 @@
 
 ## Active Work
 
-**Current Focus**: Phase 2 - Paper Trading (Plan 02-01 COMPLETE)
+**Current Focus**: Phase 2 - Paper Trading (Plan 02-02 COMPLETE)
 
 **Blocking Issues**: None
 
 **Next Actions**:
-1. Execute Plan 02-02: Strategy Loading API
-2. Execute Plan 02-03: Trailing Stop Fixes
-3. Execute Plan 02-04: Order Type Verification
+1. Execute Plan 02-03: Trailing Stop Fixes
+2. Execute Plan 02-04: Order Type Verification
 
 ---
 
@@ -49,6 +48,7 @@
 | 2026-01-17 | Plan 01-03 | Added grid search optimization and walk-forward analysis CLI commands (commit: 6482458) |
 | 2026-01-17 | Phase 01 | Backtesting Fix phase COMPLETE |
 | 2026-01-17 | Plan 02-01 | Real market data integration for paper trading (5 commits) |
+| 2026-01-17 | Plan 02-02 | Strategy loading API - 5 commits (b32daf8, 0231f4b, 65859d6, e92f30e, 5ea9573) |
 
 ---
 
@@ -56,14 +56,37 @@
 
 | Metric | Current | Target |
 |--------|---------|--------|
-| Test Coverage | ~30% | 80% |
+| Test Coverage | ~32% | 80% |
 | Any Types | Unknown | 0 |
 | Phases Complete | 1/6 | 6/6 |
-| Phase 2 Plans | 1/4 | 4/4 |
+| Phase 2 Plans | 2/4 | 4/4 |
 
 ---
 
 ## Decisions
+
+### 2026-01-17: Strategy Loading API (Plan 02-02)
+
+**Decision**: Implement reusable StrategyAdapter and dynamic strategy loading in POST /api/paper/start.
+
+**Rationale**:
+- The 501 error blocked all paper trading functionality
+- StrategyRegistry provides named strategies but returns Strategy interface
+- PaperTradingEngine requires BacktestStrategy interface
+- Need adapter pattern to bridge the interfaces
+
+**Implementation**:
+- Created src/paper-trading/adapters/strategy-adapter.ts
+- Imports StrategyRegistry and getStrategy into paper-trading-api.ts
+- POST /api/paper/start now validates input and loads strategy dynamically
+- Added GET /api/paper/strategies endpoint for discovery
+- Added 13 tests covering adapter and registry integration
+
+**Verification**:
+- POST /api/paper/start returns 200 with valid strategy
+- Invalid strategy returns 400 with available strategies list
+- GET /api/paper/strategies returns strategy details with descriptions
+- All tests pass
 
 ### 2026-01-17: Real Market Data Integration (Plan 02-01)
 
@@ -96,7 +119,7 @@
   - Plan 01-04: Added comprehensive performance reports with 30+ metrics
 - Phase 2 Paper Trading IN_PROGRESS:
   - Plan 02-01: COMPLETE - Real market data integration
-  - Plan 02-02: PENDING - Strategy loading API (currently returns 501)
+  - Plan 02-02: COMPLETE - Strategy loading API (POST /api/paper/start returns 200)
   - Plan 02-03: PENDING - Trailing stop fixes
   - Plan 02-04: PENDING - Order type verification
 - Token blacklist and rate limiting are in-memory (lost on restart)
