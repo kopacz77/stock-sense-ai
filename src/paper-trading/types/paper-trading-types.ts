@@ -208,6 +208,18 @@ export interface PortfolioState {
 }
 
 /**
+ * Data Provider Configuration
+ */
+export interface DataProviderConfig {
+  /** Preferred data provider for market data */
+  preferredProvider?: 'alpha-vantage' | 'finnhub' | 'yahoo';
+  /** Enable caching of market data */
+  cacheEnabled?: boolean;
+  /** Cache duration in milliseconds (default: 1 hour for historical, 4 hours for quotes) */
+  cacheDurationMs?: number;
+}
+
+/**
  * Paper Trading Configuration
  */
 export interface PaperTradingConfig {
@@ -248,6 +260,9 @@ export interface PaperTradingConfig {
 
   // Data refresh
   dataRefreshInterval: number; // in milliseconds (60000 = 1 min)
+
+  // Data provider configuration (optional - uses sensible defaults)
+  dataProvider?: DataProviderConfig;
 
   // Persistence
   enableEncryption: boolean;
