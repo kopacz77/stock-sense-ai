@@ -23,6 +23,7 @@ import { EncryptedStorage } from "../storage/encrypted-storage.js";
 import { FixedBPSSlippageModel } from "../../backtesting/execution/slippage-models.js";
 import { ZeroCommissionModel } from "../../backtesting/execution/commission-models.js";
 import { EventEmitter } from "node:events";
+import { MarketDataService } from "../../data/market-data-service.js";
 
 /**
  * Paper Trading Engine
@@ -36,11 +37,16 @@ export class PaperTradingEngine extends EventEmitter {
   private performanceCalculator: PerformanceCalculator;
   private riskValidator: PreTradeValidator;
   private storage: EncryptedStorage;
+  private marketDataService: MarketDataService;
 
   private strategy: BacktestStrategy | null = null;
   private running = false;
   private startTime: Date | null = null;
   private intervalId: NodeJS.Timeout | null = null;
+
+  // Market data tracking
+  private lastDataFetch: Date | null = null;
+  private dataFetchCount = 0;
 
   // Statistics
   private totalOrders = 0;
@@ -74,6 +80,9 @@ export class PaperTradingEngine extends EventEmitter {
     this.tradeJournal = new TradeJournal(this.storage);
     this.performanceCalculator = new PerformanceCalculator();
     this.riskValidator = new PreTradeValidator(config);
+
+    // Initialize market data service
+    this.marketDataService = new MarketDataService();
   }
 
   /**
@@ -81,6 +90,9 @@ export class PaperTradingEngine extends EventEmitter {
    */
   async initialize(): Promise<void> {
     await this.storage.initialize();
+
+    // Initialize market data service for real data fetching
+    await this.marketDataService.initialize();
 
     // Try to load existing state
     await this.loadState();
