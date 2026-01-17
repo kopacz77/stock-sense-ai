@@ -9,10 +9,10 @@
 - [x] **BACK-04**: User can view performance reports with 30+ metrics and equity curves
 
 ### Paper Trading
-- [ ] **PAPER-01**: Paper trading engine fetches real market data from existing providers
-- [ ] **PAPER-02**: User can start paper trading with a strategy via API endpoint
-- [ ] **PAPER-03**: Trailing stop loss orders execute correctly when price moves
-- [ ] **PAPER-04**: All 5 order types (Market, Limit, Stop, Take-Profit, Trailing) work correctly
+- [x] **PAPER-01**: Paper trading engine fetches real market data from existing providers
+- [x] **PAPER-02**: User can start paper trading with a strategy via API endpoint
+- [x] **PAPER-03**: Trailing stop loss orders execute correctly when price moves
+- [x] **PAPER-04**: All 5 order types (Market, Limit, Stop, Take-Profit, Trailing) work correctly
 
 ### Risk & Authentication
 - [ ] **RISK-01**: Risk CLI commands (var, cvar, monte-carlo, stress-test) use actual portfolio data
@@ -61,10 +61,10 @@
 | BACK-02 | Phase 1: Backtesting Fix | 01-03 | complete |
 | BACK-03 | Phase 1: Backtesting Fix | 01-03 | complete |
 | BACK-04 | Phase 1: Backtesting Fix | 01-04 | complete |
-| PAPER-01 | Phase 2: Paper Trading | — | pending |
-| PAPER-02 | Phase 2: Paper Trading | — | pending |
-| PAPER-03 | Phase 2: Paper Trading | — | pending |
-| PAPER-04 | Phase 2: Paper Trading | — | pending |
+| PAPER-01 | Phase 2: Paper Trading | 02-01 | complete |
+| PAPER-02 | Phase 2: Paper Trading | 02-02 | complete |
+| PAPER-03 | Phase 2: Paper Trading | 02-03 | complete |
+| PAPER-04 | Phase 2: Paper Trading | 02-04 | complete |
 | AUTH-01 | Phase 3: Redis Infrastructure | — | pending |
 | AUTH-02 | Phase 3: Redis Infrastructure | — | pending |
 | AUTH-03 | Phase 3: Redis Infrastructure | — | pending |
