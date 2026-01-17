@@ -64,6 +64,24 @@ export class PaperTradingAPI {
       }
     });
 
+    // List available strategies
+    this.app.get("/api/paper/strategies", (_req, res) => {
+      try {
+        const registry = StrategyRegistry.getInstance();
+        const strategies = registry.getAllStrategyInfo();
+        res.json({
+          available: registry.listStrategies(),
+          details: strategies.map((s) => ({
+            name: s.name,
+            description: s.description,
+            defaultParams: s.defaultParams,
+          })),
+        });
+      } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    });
+
     // Get portfolio
     this.app.get("/api/paper/portfolio", (req, res) => {
       try {
