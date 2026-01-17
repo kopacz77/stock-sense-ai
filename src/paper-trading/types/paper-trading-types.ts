@@ -69,6 +69,9 @@ export interface PaperOrder {
   stopLoss?: number;
   takeProfit?: number;
 
+  // Trailing stop tracking
+  peakPrice?: number; // Highest price for SELL trailing stops, lowest for BUY trailing stops
+
   // Metadata
   timeInForce: TimeInForce;
   commissionPaid: number;
