@@ -17,6 +17,10 @@ import { FixedBPSSlippageModel } from '../backtesting/execution/slippage-models.
 import { FixedCommissionModel } from '../backtesting/execution/commission-models.js';
 import type { BacktestConfig, BacktestStrategy, HistoricalDataPoint, Bar, EquityCurvePoint, DrawdownPoint, Trade } from '../backtesting/types/backtest-types.js';
 import type { HistoricalData, Signal } from '../types/trading.js';
+import type { ParameterRange, WalkForwardConfig, OptimizationConfig, OptimizationRunResult, WalkForwardResult } from '../backtesting/optimization/types.js';
+import { MarketDataProvider } from '../backtesting/data/market-data-provider.js';
+import { GridSearchOptimizer } from '../backtesting/optimization/grid-search.js';
+import { WalkForwardAnalyzer } from '../backtesting/optimization/walk-forward.js';
 
 /**
  * Strategy adapter to convert trading strategies to backtest strategies
@@ -294,6 +298,201 @@ export function registerBacktestCommands(program: Command): void {
 
       } catch (error) {
         spinner.fail('Comparison failed');
+        console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
+        process.exit(1);
+      }
+    });
+
+  /**
+   * Optimize strategy parameters using grid search
+   */
+  backtestCmd
+    .command('optimize <symbol>')
+    .description('Optimize strategy parameters using grid search')
+    .option('-s, --strategy <name>', 'Strategy name (mean-reversion, momentum)', 'mean-reversion')
+    .option('--from <date>', 'Start date (YYYY-MM-DD)', getDefaultFromDate())
+    .option('--to <date>', 'End date (YYYY-MM-DD)', getDefaultToDate())
+    .option('-c, --capital <amount>', 'Initial capital', '100000')
+    .option('-o, --objective <metric>', 'Optimization objective (sharpeRatio, totalReturn, winRate)', 'sharpeRatio')
+    .action(async (symbol: string, options: {
+      strategy: string;
+      from: string;
+      to: string;
+      capital: string;
+      objective: string;
+    }) => {
+      const spinner = ora('Initializing optimization...').start();
+
+      try {
+        // Initialize data provider
+        const dataProvider = new MarketDataProvider();
+        await dataProvider.initialize();
+
+        const from = new Date(options.from);
+        const to = new Date(options.to);
+
+        if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+          throw new Error('Invalid date format. Use YYYY-MM-DD');
+        }
+
+        spinner.text = `Setting up grid search for ${symbol}...`;
+
+        // Get parameter ranges
+        const parameterRanges = getDefaultParameterRanges(options.strategy);
+        const strategyFactory = createStrategyFactory(options.strategy);
+
+        // Calculate total combinations
+        let totalCombinations = 1;
+        for (const range of parameterRanges) {
+          if (range.min !== undefined && range.max !== undefined && range.step !== undefined) {
+            const count = Math.floor((range.max - range.min) / range.step) + 1;
+            totalCombinations *= count;
+          }
+        }
+
+        spinner.info(`Grid search will test ${totalCombinations} parameter combinations`);
+        spinner.start('Running optimization...');
+
+        // Create optimization config
+        const optimizationConfig: OptimizationConfig = {
+          id: `opt-${Date.now()}`,
+          name: `${symbol} ${options.strategy} optimization`,
+          backtestConfig: {
+            id: `backtest-${Date.now()}`,
+            name: `${symbol} ${options.strategy}`,
+            symbols: [symbol],
+            initialCapital: parseFloat(options.capital),
+            startDate: from,
+            endDate: to,
+            commission: { type: 'FIXED', fixedFee: 0 },
+            slippage: { type: 'FIXED', fixedAmount: 5 },
+            strategy: {
+              name: options.strategy,
+              parameters: {},
+            },
+          },
+          parameterRanges,
+          method: 'grid',
+          objective: options.objective as 'sharpeRatio' | 'totalReturn' | 'winRate',
+          direction: 'maximize',
+        };
+
+        // Run grid search
+        const optimizer = new GridSearchOptimizer(
+          optimizationConfig,
+          dataProvider,
+          strategyFactory
+        );
+
+        const result = await optimizer.optimize();
+
+        spinner.succeed('Optimization complete!');
+
+        // Display results
+        displayOptimizationResults(result, options.objective);
+
+      } catch (error) {
+        spinner.fail('Optimization failed');
+        console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
+        process.exit(1);
+      }
+    });
+
+  /**
+   * Walk-forward analysis to validate strategy robustness
+   */
+  backtestCmd
+    .command('walk-forward <symbol>')
+    .description('Validate strategy with walk-forward analysis')
+    .option('-s, --strategy <name>', 'Strategy name (mean-reversion, momentum)', 'mean-reversion')
+    .option('--from <date>', 'Start date (YYYY-MM-DD)', getDefaultFromDate())
+    .option('--to <date>', 'End date (YYYY-MM-DD)', getDefaultToDate())
+    .option('-c, --capital <amount>', 'Initial capital', '100000')
+    .option('--train-months <months>', 'Training window months', '6')
+    .option('--test-months <months>', 'Test window months', '2')
+    .option('--step-months <months>', 'Step forward months', '1')
+    .action(async (symbol: string, options: {
+      strategy: string;
+      from: string;
+      to: string;
+      capital: string;
+      trainMonths: string;
+      testMonths: string;
+      stepMonths: string;
+    }) => {
+      const spinner = ora('Initializing walk-forward analysis...').start();
+
+      try {
+        // Initialize data provider
+        const dataProvider = new MarketDataProvider();
+        await dataProvider.initialize();
+
+        const from = new Date(options.from);
+        const to = new Date(options.to);
+
+        if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+          throw new Error('Invalid date format. Use YYYY-MM-DD');
+        }
+
+        spinner.text = `Setting up walk-forward analysis for ${symbol}...`;
+
+        // Get parameter ranges and factory
+        const parameterRanges = getDefaultParameterRanges(options.strategy);
+        const strategyFactory = createStrategyFactory(options.strategy);
+
+        // Walk-forward config
+        const walkForwardConfig: WalkForwardConfig = {
+          trainMonths: Number.parseInt(options.trainMonths, 10),
+          testMonths: Number.parseInt(options.testMonths, 10),
+          stepMonths: Number.parseInt(options.stepMonths, 10),
+          windowType: 'rolling',
+          minWindows: 3,
+        };
+
+        // Optimization config for each window
+        const optimizationConfig: OptimizationConfig = {
+          id: `wf-opt-${Date.now()}`,
+          name: `${symbol} ${options.strategy} walk-forward`,
+          backtestConfig: {
+            id: `backtest-${Date.now()}`,
+            name: `${symbol} ${options.strategy}`,
+            symbols: [symbol],
+            initialCapital: parseFloat(options.capital),
+            startDate: from,
+            endDate: to,
+            commission: { type: 'FIXED', fixedFee: 0 },
+            slippage: { type: 'FIXED', fixedAmount: 5 },
+            strategy: {
+              name: options.strategy,
+              parameters: {},
+            },
+          },
+          parameterRanges,
+          method: 'grid',
+          objective: 'sharpeRatio',
+          direction: 'maximize',
+        };
+
+        spinner.info(`Walk-forward: ${walkForwardConfig.trainMonths}mo train, ${walkForwardConfig.testMonths}mo test, ${walkForwardConfig.stepMonths}mo step`);
+        spinner.start('Running walk-forward analysis (this may take several minutes)...');
+
+        // Run walk-forward analysis
+        const analyzer = new WalkForwardAnalyzer(
+          walkForwardConfig,
+          optimizationConfig,
+          dataProvider,
+          strategyFactory
+        );
+
+        const result = await analyzer.analyze();
+
+        spinner.succeed('Walk-forward analysis complete!');
+
+        // Display results
+        displayWalkForwardResults(result);
+
+      } catch (error) {
+        spinner.fail('Walk-forward analysis failed');
         console.error(chalk.red(error instanceof Error ? error.message : 'Unknown error'));
         process.exit(1);
       }
@@ -629,4 +828,211 @@ function getDefaultFromDate(): string {
 
 function getDefaultToDate(): string {
   return new Date().toISOString().split('T')[0] ?? '';
+}
+
+/**
+ * Create a strategy factory function for optimization
+ * Returns a function that creates BacktestStrategy instances from parameter sets
+ */
+function createStrategyFactory(strategyName: string): (params: Record<string, unknown>) => BacktestStrategy {
+  return (params: Record<string, unknown>): BacktestStrategy => {
+    let strategy;
+    if (strategyName === 'mean-reversion') {
+      strategy = new MeanReversionStrategy({
+        rsiOversold: (params.rsiOversold as number) ?? 30,
+        rsiOverbought: (params.rsiOverbought as number) ?? 70,
+        mfiOversold: (params.mfiOversold as number) ?? 20,
+        mfiOverbought: (params.mfiOverbought as number) ?? 80,
+        bbStdDev: (params.bbStdDev as number) ?? 2,
+        minConfidence: (params.minConfidence as number) ?? 60,
+        volumeThreshold: (params.volumeThreshold as number) ?? 1.2,
+        maxHoldingPeriod: (params.maxHoldingPeriod as number) ?? 30,
+      });
+    } else {
+      strategy = new MomentumStrategy({
+        shortMA: (params.shortMA as number) ?? 20,
+        longMA: (params.longMA as number) ?? 50,
+        macdFast: (params.macdFast as number) ?? 12,
+        macdSlow: (params.macdSlow as number) ?? 26,
+        macdSignal: (params.macdSignal as number) ?? 9,
+        trendStrength: (params.trendStrength as number) ?? 0.02,
+        minConfidence: (params.minConfidence as number) ?? 65,
+        volumeThreshold: (params.volumeThreshold as number) ?? 1.5,
+      });
+    }
+    return new StrategyAdapter(strategy, strategyName);
+  };
+}
+
+/**
+ * Get default parameter ranges for grid search optimization
+ */
+function getDefaultParameterRanges(strategyName: string): ParameterRange[] {
+  if (strategyName === 'mean-reversion') {
+    return [
+      { name: 'rsiOversold', type: 'integer', min: 20, max: 35, step: 5 },
+      { name: 'rsiOverbought', type: 'integer', min: 65, max: 80, step: 5 },
+      { name: 'minConfidence', type: 'integer', min: 50, max: 70, step: 10 },
+    ];
+  }
+  // Momentum strategy ranges
+  return [
+    { name: 'shortMA', type: 'integer', min: 10, max: 30, step: 5 },
+    { name: 'longMA', type: 'integer', min: 40, max: 60, step: 10 },
+    { name: 'minConfidence', type: 'integer', min: 55, max: 75, step: 10 },
+  ];
+}
+
+/**
+ * Display optimization results
+ */
+function displayOptimizationResults(result: OptimizationRunResult, objective: string): void {
+  console.log(chalk.bold(`\n${'='.repeat(60)}`));
+  console.log(chalk.bold.blue('  OPTIMIZATION RESULTS'));
+  console.log(chalk.bold(`${'='.repeat(60)}\n`));
+
+  // Best Parameters
+  const bestTable = new Table({
+    head: [chalk.cyan('BEST PARAMETERS'), chalk.cyan('Value')],
+    colWidths: [30, 25],
+  });
+
+  for (const [param, value] of Object.entries(result.bestResult.parameters.parameters)) {
+    bestTable.push([param, String(value)]);
+  }
+  console.log(bestTable.toString());
+
+  // Best Metrics
+  const metricsTable = new Table({
+    head: [chalk.cyan('BEST METRICS'), chalk.cyan('Value')],
+    colWidths: [30, 25],
+  });
+
+  metricsTable.push(
+    [chalk.green(`${objective} (Objective)`), chalk.green(result.bestResult.objectiveValue.toFixed(4))],
+    ['Total Return', `${((result.bestResult.backtestResult.metrics.totalReturn ?? 0) * 100).toFixed(2)}%`],
+    ['Sharpe Ratio', (result.bestResult.backtestResult.metrics.sharpeRatio ?? 0).toFixed(2)],
+    ['Win Rate', `${((result.bestResult.backtestResult.metrics.winRate ?? 0) * 100).toFixed(1)}%`],
+    ['Max Drawdown', chalk.red(`${((result.bestResult.backtestResult.metrics.maxDrawdown ?? 0) * 100).toFixed(2)}%`)],
+  );
+  console.log(`\n${metricsTable.toString()}`);
+
+  // Summary Statistics
+  const summaryTable = new Table({
+    head: [chalk.cyan('OPTIMIZATION SUMMARY'), chalk.cyan('Value')],
+    colWidths: [30, 25],
+  });
+
+  summaryTable.push(
+    ['Total Combinations', result.summary.totalCombinations.toString()],
+    ['Valid Combinations', result.summary.validCombinations.toString()],
+    ['Mean Objective', result.summary.meanObjectiveValue.toFixed(4)],
+    ['Std Dev Objective', result.summary.stdDevObjectiveValue.toFixed(4)],
+    ['Execution Time', `${(result.totalExecutionTimeMs / 1000).toFixed(2)}s`],
+  );
+  console.log(`\n${summaryTable.toString()}`);
+
+  // Parameter Sensitivity
+  if (result.summary.parameterSensitivity && result.summary.parameterSensitivity.length > 0) {
+    console.log(chalk.bold(`\n${'='.repeat(60)}`));
+    console.log(chalk.bold.blue('  PARAMETER SENSITIVITY'));
+    console.log(`${'='.repeat(60)}\n`);
+
+    const sensitivityTable = new Table({
+      head: ['Parameter', 'Best Value', 'Impact'],
+      colWidths: [20, 15, 25],
+    });
+
+    for (const sensitivity of result.summary.parameterSensitivity) {
+      const impactStr = sensitivity.correlation > 0.1 ? chalk.yellow('High') :
+                        sensitivity.correlation > 0.05 ? chalk.blue('Medium') : chalk.gray('Low');
+      sensitivityTable.push([
+        sensitivity.parameterName,
+        String(sensitivity.bestValue),
+        impactStr,
+      ]);
+    }
+    console.log(sensitivityTable.toString());
+  }
+}
+
+/**
+ * Display walk-forward analysis results
+ */
+function displayWalkForwardResults(result: WalkForwardResult): void {
+  console.log(chalk.bold(`\n${'='.repeat(60)}`));
+  console.log(chalk.bold.blue('  WALK-FORWARD ANALYSIS RESULTS'));
+  console.log(chalk.bold(`${'='.repeat(60)}\n`));
+
+  // Window Results
+  const windowTable = new Table({
+    head: ['Window', 'Period', 'In-Sample', 'Out-of-Sample', 'Degradation'],
+    colWidths: [8, 22, 14, 16, 14],
+  });
+
+  for (const window of result.windows) {
+    const inSample = window.optimizationResult?.objectiveValue ?? 0;
+    const outOfSample = window.testObjectiveValue ?? 0;
+    const degradation = inSample !== 0 ? ((outOfSample - inSample) / inSample) * 100 : 0;
+    const degradationColor = degradation >= 0 ? 'green' : (degradation > -20 ? 'yellow' : 'red');
+
+    windowTable.push([
+      (window.index + 1).toString(),
+      `${window.trainStart.toISOString().split('T')[0]?.slice(5)} - ${window.testEnd.toISOString().split('T')[0]?.slice(5)}`,
+      inSample.toFixed(3),
+      outOfSample.toFixed(3),
+      chalk[degradationColor](`${degradation.toFixed(1)}%`),
+    ]);
+  }
+  console.log(windowTable.toString());
+
+  // Overfitting Analysis
+  const analysis = result.overfittingAnalysis;
+  const severityColors: Record<string, 'green' | 'yellow' | 'red'> = {
+    none: 'green',
+    low: 'green',
+    moderate: 'yellow',
+    high: 'red',
+    severe: 'red',
+  };
+  const severityColor = severityColors[analysis.severity] ?? 'yellow';
+
+  console.log(chalk.bold(`\n${'='.repeat(60)}`));
+  console.log(chalk.bold.blue('  OVERFITTING ANALYSIS'));
+  console.log(`${'='.repeat(60)}\n`);
+
+  const analysisTable = new Table({
+    head: [chalk.cyan('METRIC'), chalk.cyan('VALUE')],
+    colWidths: [30, 30],
+  });
+
+  analysisTable.push(
+    ['Severity', chalk[severityColor](analysis.severity.toUpperCase())],
+    ['Degradation', chalk[analysis.degradationPercent < -15 ? 'red' : 'green'](`${analysis.degradationPercent.toFixed(2)}%`)],
+    ['Consistency Score', `${analysis.consistencyScore.toFixed(1)}/100`],
+    ['Avg In-Sample', analysis.avgInSampleObjective.toFixed(4)],
+    ['Avg Out-of-Sample', analysis.avgOutOfSampleObjective.toFixed(4)],
+    ['Outperforming Windows', `${analysis.outperformingWindows}/${analysis.totalWindows}`],
+  );
+  console.log(analysisTable.toString());
+
+  // Status
+  if (analysis.isOverfitted) {
+    console.log(chalk.red('\nWARNING: Strategy appears to be OVERFIT to historical data!'));
+  } else {
+    console.log(chalk.green('\nStrategy shows GOOD GENERALIZATION to out-of-sample data.'));
+  }
+
+  // Recommendations
+  if (analysis.recommendations && analysis.recommendations.length > 0) {
+    console.log(chalk.bold(`\n${'='.repeat(60)}`));
+    console.log(chalk.bold.blue('  RECOMMENDATIONS'));
+    console.log(`${'='.repeat(60)}\n`);
+    for (const rec of analysis.recommendations) {
+      console.log(`  - ${rec}`);
+    }
+  }
+
+  // Execution time
+  console.log(chalk.gray(`\nTotal execution time: ${(result.totalExecutionTimeMs / 1000 / 60).toFixed(2)} minutes`));
 }
