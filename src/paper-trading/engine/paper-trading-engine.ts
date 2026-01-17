@@ -203,11 +203,35 @@ export class PaperTradingEngine extends EventEmitter {
   /**
    * Fetch market data for symbols using real market data providers
    * Uses MarketDataService with fallback: Alpha Vantage -> Finnhub -> Yahoo Finance
+   * Includes rate limiting awareness and caching
    */
   private async fetchMarketData(
     symbols: string[]
   ): Promise<Map<string, MarketDataUpdate>> {
     const marketData = new Map<string, MarketDataUpdate>();
+
+    // Check minimum interval between API calls to respect rate limits
+    const now = Date.now();
+    if (this.lastDataFetch) {
+      const timeSinceLastFetch = now - this.lastDataFetch.getTime();
+      const minInterval = this.config.dataRefreshInterval;
+
+      if (timeSinceLastFetch < minInterval) {
+        console.debug(
+          `Skipping fetch: ${timeSinceLastFetch}ms since last fetch (min: ${minInterval}ms)`
+        );
+        // Return empty map - positions will keep their last known prices
+        return marketData;
+      }
+    }
+
+    // Log data source information
+    const cacheStats = this.marketDataService.getApiUsageStats();
+    console.debug(
+      `Fetching market data for ${symbols.length} symbols. ` +
+      `Cache: ${cacheStats.cacheStats.historical} historical, ${cacheStats.cacheStats.quotes} quotes. ` +
+      `API calls today: ${cacheStats.callCount}/${cacheStats.dailyLimit}`
+    );
 
     // Use Promise.allSettled for parallel fetching - one failed symbol won't crash others
     const fetchPromises = symbols.map(async (symbol) => {
@@ -230,22 +254,45 @@ export class PaperTradingEngine extends EventEmitter {
         return { symbol, update, success: true as const };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.warn(`Failed to fetch market data for ${symbol}: ${errorMessage}`);
+
+        // Check for rate limit errors specifically
+        if (errorMessage.includes("rate limit")) {
+          console.warn(
+            `Rate limit hit for ${symbol}. Consider increasing dataRefreshInterval. ` +
+            `Current: ${this.config.dataRefreshInterval}ms`
+          );
+        } else {
+          console.warn(`Failed to fetch market data for ${symbol}: ${errorMessage}`);
+        }
+
         return { symbol, error: errorMessage, success: false as const };
       }
     });
 
     const results = await Promise.allSettled(fetchPromises);
 
+    let successCount = 0;
+    let failCount = 0;
+
     for (const result of results) {
       if (result.status === "fulfilled" && result.value.success) {
         marketData.set(result.value.symbol, result.value.update);
+        successCount++;
+      } else {
+        failCount++;
       }
-      // Failed symbols are logged but don't prevent other symbols from updating
     }
 
     this.dataFetchCount++;
     this.lastDataFetch = new Date();
+
+    // Log fetch summary
+    if (failCount > 0) {
+      console.info(
+        `Market data fetch complete: ${successCount}/${symbols.length} symbols succeeded, ` +
+        `${failCount} failed`
+      );
+    }
 
     return marketData;
   }
