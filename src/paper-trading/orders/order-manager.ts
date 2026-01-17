@@ -42,6 +42,7 @@ export class OrderManager {
     takeProfit?: number;
     timeInForce?: TimeInForce;
     expiresAt?: Date;
+    currentPrice?: number; // For trailing stop initialization
   }): PaperOrder {
     // Validate order parameters
     this.validateOrderParams(params);
@@ -70,6 +71,21 @@ export class OrderManager {
       commissionPaid: 0,
       slippagePaid: 0,
     };
+
+    // Initialize trailing stop with peak price tracking
+    if (params.type === "TRAILING_STOP" && params.currentPrice) {
+      order.peakPrice = params.currentPrice;
+      // Set initial stop price based on trailing amount or percent
+      if (params.trailingPercent) {
+        order.stopPrice = params.side === "SELL"
+          ? params.currentPrice * (1 - params.trailingPercent / 100)
+          : params.currentPrice * (1 + params.trailingPercent / 100);
+      } else if (params.trailingAmount) {
+        order.stopPrice = params.side === "SELL"
+          ? params.currentPrice - params.trailingAmount
+          : params.currentPrice + params.trailingAmount;
+      }
+    }
 
     this.orders.set(order.id, order);
 
@@ -316,7 +332,15 @@ export class OrderManager {
   }
 
   /**
-   * Update trailing stop price
+   * Update trailing stop price based on market movement
+   *
+   * For SELL orders (protecting long positions):
+   *   - Track highest price seen (peakPrice)
+   *   - Only adjust stop upward when price makes new highs
+   *
+   * For BUY orders (protecting short positions):
+   *   - Track lowest price seen (peakPrice = trough)
+   *   - Only adjust stop downward when price makes new lows
    */
   updateTrailingStop(
     orderId: string,
@@ -329,36 +353,39 @@ export class OrderManager {
       return;
     }
 
-    // Update stop price based on highest/lowest price
-    if (order.trailingPercent) {
-      if (order.side === "SELL") {
-        // Sell trailing stop: follows price up
-        const newStopPrice = highPrice * (1 - order.trailingPercent / 100);
-        if (!order.stopPrice || newStopPrice > order.stopPrice) {
-          order.stopPrice = newStopPrice;
+    if (order.side === "SELL") {
+      // Sell trailing stop: track highest price (peak)
+      const currentPeak = order.peakPrice ?? 0;
+
+      if (highPrice > currentPeak) {
+        // New high - update peak and recalculate stop
+        order.peakPrice = highPrice;
+
+        if (order.trailingPercent) {
+          order.stopPrice = highPrice * (1 - order.trailingPercent / 100);
+        } else if (order.trailingAmount) {
+          order.stopPrice = highPrice - order.trailingAmount;
         }
-      } else {
-        // Buy trailing stop: follows price down
-        const newStopPrice = lowPrice * (1 + order.trailingPercent / 100);
-        if (!order.stopPrice || newStopPrice < order.stopPrice) {
-          order.stopPrice = newStopPrice;
-        }
+
+        order.updatedAt = new Date();
       }
-    } else if (order.trailingAmount) {
-      if (order.side === "SELL") {
-        const newStopPrice = highPrice - order.trailingAmount;
-        if (!order.stopPrice || newStopPrice > order.stopPrice) {
-          order.stopPrice = newStopPrice;
+    } else {
+      // Buy trailing stop: track lowest price (trough)
+      const currentTrough = order.peakPrice ?? Number.POSITIVE_INFINITY;
+
+      if (lowPrice < currentTrough) {
+        // New low - update trough and recalculate stop
+        order.peakPrice = lowPrice;
+
+        if (order.trailingPercent) {
+          order.stopPrice = lowPrice * (1 + order.trailingPercent / 100);
+        } else if (order.trailingAmount) {
+          order.stopPrice = lowPrice + order.trailingAmount;
         }
-      } else {
-        const newStopPrice = lowPrice + order.trailingAmount;
-        if (!order.stopPrice || newStopPrice < order.stopPrice) {
-          order.stopPrice = newStopPrice;
-        }
+
+        order.updatedAt = new Date();
       }
     }
-
-    order.updatedAt = new Date();
   }
 
   /**
