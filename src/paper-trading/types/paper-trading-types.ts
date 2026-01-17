@@ -106,6 +106,8 @@ export interface PaperPosition {
   stopLoss?: number;
   takeProfit?: number;
   trailingStopPrice?: number;
+  trailingAmount?: number; // Fixed dollar trailing stop amount
+  trailingPercent?: number; // Percentage-based trailing stop
 
   // Costs
   entryCommission: number;

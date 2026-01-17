@@ -631,6 +631,7 @@ export class PaperTradingEngine extends EventEmitter {
           (position.side === "LONG" && marketData.price <= position.trailingStopPrice) ||
           (position.side === "SHORT" && marketData.price >= position.trailingStopPrice)
         ) {
+          // Trailing stop triggered - execute market order to close position
           const order = this.orderManager.createOrder({
             symbol,
             type: "MARKET",
@@ -640,16 +641,14 @@ export class PaperTradingEngine extends EventEmitter {
           });
 
           await this.executeOrder(order, marketData);
+        } else {
+          // Price moved favorably - update trailing stop price
+          this.portfolio.updateTrailingStop(
+            symbol,
+            position.trailingAmount ?? 0,
+            position.trailingPercent
+          );
         }
-        // TODO: Implement trailing stop logic when PaperPosition interface is updated
-        // else {
-        //   // Update trailing stop
-        //   this.portfolio.updateTrailingStop(
-        //     symbol,
-        //     position.trailingAmount ?? 0,
-        //     position.trailingPercent
-        //   );
-        // }
       }
     }
   }
