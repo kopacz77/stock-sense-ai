@@ -107,6 +107,8 @@ export function DiscoveryPage() {
                 Trending
               </Button>
               <Select
+                id="sector-select"
+                name="sector"
                 value={sector}
                 onChange={(e) => setSector(e.target.value)}
                 className="w-40 sm:w-48"
@@ -134,6 +136,7 @@ export function DiscoveryPage() {
                 <label htmlFor="discovery-confidence" className="text-sm text-dark-text-secondary">Confidence:</label>
                 <Input
                   id="discovery-confidence"
+                  name="confidence"
                   type="number"
                   value={confidence}
                   onChange={(e) => setConfidence(e.target.value)}
@@ -147,6 +150,7 @@ export function DiscoveryPage() {
                 <label htmlFor="max-results" className="text-sm text-dark-text-secondary">Max Results:</label>
                 <Input
                   id="max-results"
+                  name="maxResults"
                   type="number"
                   value={maxResults}
                   onChange={(e) => setMaxResults(e.target.value)}

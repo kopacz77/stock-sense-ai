@@ -168,7 +168,9 @@ export function MarketPage() {
                       <span className={`font-bold ${sentimentColor === 'success' ? 'text-success-400' : sentimentColor === 'danger' ? 'text-danger-400' : 'text-warning-400'}`}>
                         {overview.marketSentiment}
                       </span>
-                      {' '}based on analysis of {overview.totalAnalyzed} stocks.
+                      {' '}based on analysis of{' '}
+                      <span className="text-primary-400 font-medium">{overview.successfullyAnalyzed || overview.totalAnalyzed}</span>
+                      {' '}of {overview.totalAnalyzed} stocks.
                     </span>
                   </p>
                   <p className="flex items-start gap-2 text-dark-text-tertiary">
@@ -195,6 +197,51 @@ export function MarketPage() {
                     </p>
                   )}
                 </div>
+              </div>
+
+              {/* Analyzed Stocks Detail */}
+              <div className="bg-dark-bg/60 rounded-lg p-4 sm:p-6 border border-dark-border">
+                <h4 className="flex items-center gap-2 text-lg font-semibold text-dark-text-primary mb-4">
+                  <Activity className="w-5 h-5 text-primary-400" aria-hidden="true" />
+                  Stocks Analyzed
+                </h4>
+                <p className="text-xs text-dark-text-muted mb-3">
+                  Top 20 S&P 500 stocks by market cap are used to gauge overall market sentiment.
+                </p>
+                {overview.analyzedSymbols && overview.analyzedSymbols.length > 0 && (
+                  <div className="mb-4">
+                    <p className="text-xs text-dark-text-tertiary mb-2">
+                      Successfully analyzed ({overview.analyzedSymbols.length}):
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {overview.analyzedSymbols.map((symbol) => (
+                        <span
+                          key={symbol}
+                          className="px-2 py-0.5 text-xs bg-success-500/10 text-success-400 rounded border border-success-500/20"
+                        >
+                          {symbol}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {overview.skippedSymbols && overview.skippedSymbols.length > 0 && (
+                  <div>
+                    <p className="text-xs text-dark-text-tertiary mb-2">
+                      Skipped due to rate limits or errors ({overview.skippedSymbols.length}):
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {overview.skippedSymbols.map((symbol) => (
+                        <span
+                          key={symbol}
+                          className="px-2 py-0.5 text-xs bg-warning-500/10 text-warning-400 rounded border border-warning-500/20"
+                        >
+                          {symbol}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}

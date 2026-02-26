@@ -122,6 +122,8 @@ export function MonitoringPage() {
                   Stop
                 </Button>
                 <Select
+                  id="scan-interval"
+                  name="interval"
                   value={interval}
                   onChange={(e) => setInterval(e.target.value)}
                   className="w-28 sm:w-32"
@@ -135,8 +137,10 @@ export function MonitoringPage() {
               </div>
 
               <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-                <label className="flex items-center gap-2 text-sm text-dark-text-secondary cursor-pointer">
+                <label htmlFor="include-trending" className="flex items-center gap-2 text-sm text-dark-text-secondary cursor-pointer">
                   <input
+                    id="include-trending"
+                    name="includeTrending"
                     type="checkbox"
                     checked={includeTrending}
                     onChange={(e) => setIncludeTrending(e.target.checked)}
@@ -148,6 +152,7 @@ export function MonitoringPage() {
                   <label htmlFor="confidence" className="text-sm text-dark-text-secondary">Confidence:</label>
                   <Input
                     id="confidence"
+                    name="confidence"
                     type="number"
                     value={confidence}
                     onChange={(e) => setConfidence(e.target.value)}

@@ -36,6 +36,22 @@ export class StockDiscovery {
   });
   private riskManager = new RiskManager();
 
+  // Market overview cache (10 minutes TTL - reduces API calls dramatically)
+  private marketOverviewCache: {
+    data: {
+      totalAnalyzed: number;
+      successfullyAnalyzed: number;
+      bullishSignals: number;
+      bearishSignals: number;
+      topSectors: Array<{ sector: string; signalCount: number }>;
+      marketSentiment: "BULLISH" | "BEARISH" | "NEUTRAL";
+      analyzedSymbols: string[];
+      skippedSymbols: string[];
+    } | null;
+    timestamp: number;
+  } = { data: null, timestamp: 0 };
+  private readonly MARKET_OVERVIEW_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
   // S&P 500 symbols (comprehensive list for maximum opportunity discovery)
   private readonly SP500_SYMBOLS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK.B", "UNH", "JNJ",
@@ -212,21 +228,37 @@ export class StockDiscovery {
 
   async getMarketOverview(): Promise<{
     totalAnalyzed: number;
+    successfullyAnalyzed: number;
     bullishSignals: number;
     bearishSignals: number;
     topSectors: Array<{ sector: string; signalCount: number }>;
     marketSentiment: "BULLISH" | "BEARISH" | "NEUTRAL";
+    analyzedSymbols: string[];
+    skippedSymbols: string[];
   }> {
-    // Quick analysis of top 20 S&P 500 stocks to gauge market sentiment
-    const sampleSymbols = this.SP500_SYMBOLS.slice(0, 20);
+    // Return cached data if still valid (10 minute TTL)
+    if (
+      this.marketOverviewCache.data &&
+      Date.now() - this.marketOverviewCache.timestamp < this.MARKET_OVERVIEW_CACHE_TTL
+    ) {
+      return this.marketOverviewCache.data;
+    }
+
+    // Analyze top 5 S&P 500 stocks by market cap for market sentiment
+    // These mega-caps represent ~25% of S&P 500 and are reliable market indicators
+    // AAPL, MSFT, GOOGL, AMZN, NVDA - saves API calls while still providing useful signal
+    const sampleSymbols = this.SP500_SYMBOLS.slice(0, 5);
     let bullishCount = 0;
     let bearishCount = 0;
     const sectorSignals: Record<string, number> = {};
+    const analyzedSymbols: string[] = [];
+    const skippedSymbols: string[] = [];
 
     for (const symbol of sampleSymbols) {
       try {
         const analysisData = await this.marketData.getFullAnalysisData(symbol);
         const signal = await this.meanReversionStrategy.analyze(symbol, analysisData.historical);
+        analyzedSymbols.push(symbol);
 
         if (signal.confidence > 60) {
           if (signal.action === "BUY") bullishCount++;
@@ -238,9 +270,10 @@ export class StockDiscovery {
           }
         }
 
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error) {
-        // Skip failed symbols
+        // Reduced delay since we're using cached data
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch {
+        skippedSymbols.push(symbol);
       }
     }
 
@@ -253,12 +286,20 @@ export class StockDiscovery {
     if (bullishCount > bearishCount * 1.5) marketSentiment = "BULLISH";
     else if (bearishCount > bullishCount * 1.5) marketSentiment = "BEARISH";
 
-    return {
+    const result = {
       totalAnalyzed: sampleSymbols.length,
+      successfullyAnalyzed: analyzedSymbols.length,
       bullishSignals: bullishCount,
       bearishSignals: bearishCount,
       topSectors,
       marketSentiment,
+      analyzedSymbols,
+      skippedSymbols,
     };
+
+    // Cache the result
+    this.marketOverviewCache = { data: result, timestamp: Date.now() };
+
+    return result;
   }
 }

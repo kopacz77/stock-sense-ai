@@ -41,7 +41,10 @@ const defaultOverview: MarketOverview = {
   bullishSignals: 0,
   bearishSignals: 0,
   totalAnalyzed: 0,
+  successfullyAnalyzed: 0,
   topSectors: [],
+  analyzedSymbols: [],
+  skippedSymbols: [],
 };
 
 export const useTradingStore = create<TradingState>((set) => ({

@@ -527,10 +527,11 @@ export class WebServer {
       // Send initial data
       this.sendUpdateToClient(socket);
 
-      // Set up periodic updates
+      // Set up periodic updates - 5 minutes to respect API rate limits
+      // Market overview is cached for 10 min, so 5 min refresh is plenty
       const updateInterval = setInterval(() => {
         this.sendUpdateToClient(socket);
-      }, 30000); // Update every 30 seconds
+      }, 5 * 60 * 1000); // Update every 5 minutes (was 30 seconds!)
 
       // Track the interval for cleanup
       this.activeIntervals.add(updateInterval);

@@ -70,10 +70,13 @@ export interface MarketOverview {
   bullishSignals: number;
   bearishSignals: number;
   totalAnalyzed: number;
+  successfullyAnalyzed: number;
   topSectors: Array<{
     sector: string;
     signalCount: number;
   }>;
+  analyzedSymbols: string[];
+  skippedSymbols: string[];
 }
 
 export interface ChartDataPoint {

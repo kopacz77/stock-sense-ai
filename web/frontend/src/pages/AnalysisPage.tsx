@@ -182,6 +182,8 @@ export function AnalysisPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-text-muted" aria-hidden="true" />
               <Input
+                id="stock-symbol"
+                name="symbol"
                 type="text"
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
