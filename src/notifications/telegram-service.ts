@@ -2,11 +2,29 @@ import axios from "axios";
 import { SecureConfig } from "../config/secure-config.js";
 import type { Signal } from "../types/trading.js";
 
+export type TelegramMessageType =
+  | "STRONG_SIGNAL"
+  | "RISK_WARNING"
+  | "POSITION_UPDATE"
+  | "MARKET_MOVE"
+  | "SYSTEM_ALERT"
+  // Market Intelligence (M2-03)
+  | "HEADLINE_PM_CONFIRMED"
+  | "HEADLINE_PM_DIVERGENCE"
+  | "DAILY_DIGEST";
+
 export interface TelegramMessage {
-  type: "STRONG_SIGNAL" | "RISK_WARNING" | "POSITION_UPDATE" | "MARKET_MOVE" | "SYSTEM_ALERT";
+  type: TelegramMessageType;
   symbol?: string;
   signals?: Signal[];
+  /**
+   * Free-form message body. For intelligence alerts the alerter pre-formats
+   * the body (with Markdown), and the service just wraps it with a header
+   * and disclaimer.
+   */
   message?: string;
+  /** Optional title override for intel alerts (used in formatMessage header). */
+  title?: string;
   priority?: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
 }
 
@@ -101,6 +119,21 @@ export class TelegramService {
       case "SYSTEM_ALERT":
         message += `🔧 *System Alert*\n`;
         message += `📝 ${alert.message || "System notification"}\n`;
+        break;
+
+      case "HEADLINE_PM_CONFIRMED":
+        message += `🔴 *${alert.title ?? "Headline ↔ Polymarket Confirmed"}*\n\n`;
+        message += `${alert.message ?? ""}\n`;
+        break;
+
+      case "HEADLINE_PM_DIVERGENCE":
+        message += `🔵 *${alert.title ?? "Polymarket Moved — No News Found"}*\n\n`;
+        message += `${alert.message ?? ""}\n`;
+        break;
+
+      case "DAILY_DIGEST":
+        message += `📋 *${alert.title ?? "Daily Digest"}*\n\n`;
+        message += `${alert.message ?? ""}\n`;
         break;
 
       default:
