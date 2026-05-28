@@ -1,15 +1,12 @@
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import ora from "ora";
 import { SecureConfig } from "../../config/secure-config.js";
 import { TelegramService } from "../../notifications/telegram-service.js";
-import { IntelligenceAlerter } from "../alerts/intelligence-alerter.js";
-import { HeadlinePmCorrelator } from "../correlator/headline-pm-correlator.js";
 import { LlmCorrelator } from "../correlator/llm-correlator.js";
-import { LlmCostTracker } from "../correlator/cost-tracker.js";
 import { NewsPoller } from "../news/news-poller.js";
+import { runCycle } from "../scheduler/cycle-runner.js";
 import { IntelScheduler } from "../scheduler/intel-scheduler.js";
 import { PolymarketClient } from "../polymarket/polymarket-client.js";
 import {
@@ -17,9 +14,6 @@ import {
   filterRelevantMarkets,
   topicsForMarket,
 } from "../polymarket/relevance-filter.js";
-import { JsonlStore } from "../storage/jsonl-store.js";
-import type { NewsArticle } from "../news/types.js";
-import type { MarketSnapshot } from "../polymarket/types.js";
 
 const DATA_DIR = "./data/intel";
 const WATCHLIST_PATH = "./watchlist.txt";
@@ -335,75 +329,34 @@ export function registerIntelCommands(program: Command): void {
       const spinner = ora("Polling news and Polymarket...").start();
 
       try {
-        // 1. Fetch in parallel
-        const poller = new NewsPoller({ finnhubApiKey: apiKey, lookbackHours: 6 });
-        const pmClient = new PolymarketClient();
-        const [articles, rawMarkets] = await Promise.all([
-          watchlist.length > 0 ? poller.fetchWatchlistNews(watchlist) : Promise.resolve([] as NewsArticle[]),
-          pmClient.fetchActiveMarkets({ limit: 500, minVolume24hr: 10_000 }),
-        ]);
-        const markets = filterRelevantMarkets(rawMarkets);
-        spinner.text = `Fetched ${articles.length} articles, ${rawMarkets.length} → ${markets.length} relevant markets — persisting...`;
+        const result = await runCycle({
+          finnhubApiKey: apiKey,
+          llm: llmCfg ?? undefined,
+          watchlist,
+          minMovePp: minMove,
+          dailyCapUsd: Number(opts.dailyCap ?? 5),
+          dataDir: DATA_DIR,
+          dryRun: opts.dryRun,
+        });
 
-        // 2. Persist
-        await persistStreams(articles, markets);
-
-        // 3. Correlate (LLM if reachable + under daily cap, else rule-based)
-        spinner.text = "Correlating headlines ↔ Polymarket moves...";
-
-        let alerts;
-        let cycleCost = 0;
-        let correlatorUsed = "rule-based";
-        const costTracker = new LlmCostTracker(DATA_DIR);
-        const dailyCap = Number(opts.dailyCap ?? 5);
-        const usedToday = await costTracker.todayUsd();
-
-        const remoteCapHit = llmCfg?.provider === "remote" && usedToday >= dailyCap;
-        if (llmCfg && !remoteCapHit) {
-          try {
-            const llm = new LlmCorrelator({
-              endpoint: llmCfg.endpoint,
-              model: llmCfg.model,
-              apiKey: llmCfg.apiKey,
-              minMovePp: minMove,
-            });
-            const result = await llm.correlate(markets, articles);
-            alerts = result.alerts;
-            cycleCost = result.cost.usdEstimate;
-            if (cycleCost > 0) await costTracker.record(result.cost);
-            correlatorUsed = `llm:${llmCfg.model}`;
-          } catch (err) {
-            spinner.warn(
-              `LLM correlator failed: ${err instanceof Error ? err.message : String(err)}. Falling back to rule-based.`,
-            );
-            if (err instanceof Error && err.stack) {
-              console.log(chalk.gray(err.stack.split("\n").slice(0, 5).join("\n")));
-            }
-            const rules = new HeadlinePmCorrelator({ minMovePp: minMove });
-            alerts = rules.correlate(markets, articles);
-          }
-        } else {
-          if (remoteCapHit) {
-            spinner.text = `Daily LLM cap $${dailyCap} reached ($${usedToday.toFixed(2)} used). Using rule-based.`;
-          }
-          const rules = new HeadlinePmCorrelator({ minMovePp: minMove });
-          alerts = rules.correlate(markets, articles);
-        }
-
+        const correlatorUsed =
+          result.correlator === "llm" && llmCfg ? `llm:${llmCfg.model}` : "rule-based";
+        const costSuffix =
+          result.llmUsedUsd > 0
+            ? ` Cost: $${result.llmUsedUsd.toFixed(4)} (today $${result.llmDailyUsedUsd.toFixed(2)}/$${result.llmDailyCapUsd}).`
+            : "";
         spinner.succeed(
-          `Cycle complete. ${articles.length} articles, ${markets.length} markets, ${alerts.length} alerts via ${correlatorUsed}.` +
-            (cycleCost > 0 ? ` Cost: $${cycleCost.toFixed(4)} (today $${(usedToday + cycleCost).toFixed(2)}/$${dailyCap}).` : ""),
+          `Cycle complete. ${result.articles} articles, ${result.relevantMarkets} markets, ${result.alerts.length} alerts via ${correlatorUsed}.${costSuffix}`,
         );
 
-        if (alerts.length === 0) {
+        if (result.alerts.length === 0) {
           console.log(chalk.gray("No alert-worthy correlations found this cycle."));
           return;
         }
 
-        // 4. Dispatch
         if (opts.dryRun) {
           console.log(chalk.yellow("\nDry-run mode — alerts not sent to Telegram:\n"));
-          for (const a of alerts) {
+          for (const a of result.alerts) {
             console.log(chalk.bold(`[${a.kind}]`));
             console.log(JSON.stringify(a, null, 2));
             console.log("");
@@ -411,23 +364,10 @@ export function registerIntelCommands(program: Command): void {
           return;
         }
 
-        const alerter = new IntelligenceAlerter(DATA_DIR);
-        let sent = 0;
-        for (const alert of alerts) {
-          const ok = await alerter.send(alert);
-          if (ok) sent++;
-        }
-        console.log(chalk.green(`Sent ${sent}/${alerts.length} alerts to Telegram.`));
+        console.log(chalk.green(`Sent ${result.alertsSent}/${result.alerts.length} alerts to Telegram.`));
       } catch (err) {
         spinner.fail(`Cycle failed: ${err instanceof Error ? err.message : String(err)}`);
         process.exit(1);
       }
     });
-}
-
-async function persistStreams(articles: NewsArticle[], markets: MarketSnapshot[]): Promise<void> {
-  await fs.mkdir(path.resolve(DATA_DIR), { recursive: true });
-  const newsStore = new JsonlStore<NewsArticle>(DATA_DIR, "news");
-  const pmStore = new JsonlStore<MarketSnapshot>(DATA_DIR, "polymarket-snapshots");
-  await Promise.all([newsStore.appendMany(articles), pmStore.appendMany(markets)]);
 }

@@ -20,7 +20,10 @@ export class PolymarketClient {
 
   /**
    * Fetch active markets, normalized to MarketSnapshot.
-   * Defaults: active=true, closed=false, limit=100, sorted by 24h volume desc client-side.
+   * Defaults: active=true, closed=false, limit=100, ordered by 24h volume desc server-side.
+   * The server-side order is critical: without it Gamma returns a long-tail
+   * default order (meme markets, sports finals) and the actual high-volume
+   * macro/geopolitical markets never enter our universe.
    */
   async fetchActiveMarkets(options: PolymarketQueryOptions = {}): Promise<MarketSnapshot[]> {
     const params: Record<string, string | number | boolean> = {
@@ -28,6 +31,8 @@ export class PolymarketClient {
       closed: options.closed ?? false,
       limit: options.limit ?? 100,
       offset: options.offset ?? 0,
+      order: "volume24hr",
+      ascending: false,
     };
 
     const { data } = await this.http.get<PolymarketMarket[]>("/markets", { params });

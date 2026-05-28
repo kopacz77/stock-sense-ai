@@ -4,6 +4,7 @@ import { IntelligenceAlerter } from "../alerts/intelligence-alerter.js";
 import { HeadlinePmCorrelator } from "../correlator/headline-pm-correlator.js";
 import { LlmCorrelator } from "../correlator/llm-correlator.js";
 import { LlmCostTracker } from "../correlator/cost-tracker.js";
+import { MacroNewsPoller } from "../news/macro-news-poller.js";
 import { NewsPoller } from "../news/news-poller.js";
 import { PolymarketClient } from "../polymarket/polymarket-client.js";
 import { filterRelevantMarkets } from "../polymarket/relevance-filter.js";
@@ -51,18 +52,25 @@ export interface CycleResult {
 export async function runCycle(options: CycleOptions): Promise<CycleResult> {
   const start = Date.now();
   const dataDir = options.dataDir ?? "./data/intel";
-  const minMovePp = options.minMovePp ?? 3;
+  const minMovePp = options.minMovePp ?? 0.5;
   const dailyCap = options.dailyCapUsd ?? 5;
 
-  // 1. Fetch
+  // 1. Fetch — equity news (Finnhub), macro news (RSS), and Polymarket in parallel.
+  // Macro RSS is the source for geopolitical/policy headlines that never
+  // mention a ticker but drive sector/ETF trades (Iran ceasefire → XLE, etc.).
   const poller = new NewsPoller({ finnhubApiKey: options.finnhubApiKey, lookbackHours: 6 });
+  const macroPoller = new MacroNewsPoller({ lookbackHours: 6 });
   const pm = new PolymarketClient();
-  const [articles, rawMarkets] = await Promise.all([
+  const [equityArticles, macroArticles, rawMarkets] = await Promise.all([
     options.watchlist.length > 0
       ? poller.fetchWatchlistNews(options.watchlist)
       : Promise.resolve([] as NewsArticle[]),
+    macroPoller.fetchAll(),
     pm.fetchActiveMarkets({ limit: 500, minVolume24hr: 10_000 }),
   ]);
+  const articles = [...equityArticles, ...macroArticles].sort(
+    (a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt),
+  );
   const markets = filterRelevantMarkets(rawMarkets);
 
   // 2. Persist
