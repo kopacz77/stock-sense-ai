@@ -5,10 +5,10 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-03 (Market Intelligence Bot) — started 2026-05-23 |
-| Status | Building (M2-01 deferred to run in parallel later) |
+| Current Phase | Between M2-03 (complete) and M2-04 (next) |
+| Status | M2-03 complete; M2-04 scope discussion next |
 | Last Pivot | 2026-05-23 |
-| Last Updated | 2026-05-23 |
+| Last Updated | 2026-05-28 |
 
 ---
 
@@ -31,7 +31,7 @@
 |-------|------|--------|---------|-----------|
 | M2-01 | Strategy Reality Check | pending | — | — |
 | M2-02 | Alpaca Paper Integration | pending | — | — |
-| M2-03 | Market Intelligence Bot | in progress | 2026-05-23 | — |
+| M2-03 | Market Intelligence Bot | ✅ COMPLETE | 2026-05-23 | 2026-05-28 |
 | M2-04 | LLM Trade-Signal Layer | pending | — | — |
 | M2-05 | AI-Augmented Strategy Engine | pending | — | — |
 | M2-06 | Hard Risk Management | pending | — | — |
@@ -41,18 +41,14 @@
 
 ## Active Work
 
-**Current Focus**: M2-03 Market Intelligence Bot — build news + Polymarket + LLM correlator + Telegram alerts. Standalone valuable today; foundation for M2-04+.
+**Current Focus**: M2-03 closed. Next: discuss scope for M2-04 LLM Trade-Signal Layer.
 
 **Blocking Issues**: None.
 
 **Next Actions**:
-1. Inspect existing Telegram + secure-config plumbing (extension points)
-2. Build Polymarket read-only client (Gamma API)
-3. Build Finnhub company-news poller with JSONL storage
-4. Extend Telegram alert types (HEADLINE_PM_CONFIRMED / DIVERGENCE / DAILY_DIGEST)
-5. Add node-cron scheduler + manual one-cycle CLI command
-6. Rule-based correlator → LLM correlator → daily digest
-7. End-to-end smoke test with real APIs and real Telegram
+1. Run `/gsd:discuss-phase` for M2-04 to align scope. Roadmap currently scopes M2-04 as per-ticker sentiment / theme tagging / catalyst flags — but live M2-03 alerts surfaced an additional gap: PM markets are macro (Iran / BTC / Fed / Trump) and map to ETFs/sectors, not single tickers. M2-04 scope likely needs to grow to include PM-market→ticker translation, depth-weighted conviction, and dedup across related markets.
+2. Plan M2-04 (`/gsd:plan-phase`) producing PLAN.md with PM-to-ticker mapping decisions baked in.
+3. Execute M2-04.
 
 **Parallel track (lower priority)**: M2-01 Strategy Reality Check can run anytime since it's mostly automated backtest runs against existing data.
 
@@ -74,6 +70,11 @@
 | 2026-01-17 | Plan 02-04 | Order type verification (3 commits) |
 | 2026-01-17 | Phase 02 | Paper Trading phase COMPLETE |
 | 2026-05-23 | **Milestone Pivot** | M1 paused after Phase 2; M2 (AI-Augmented Swing Trading) begun. PROJECT.md, ROADMAP.md, REQUIREMENTS.md rewritten. |
+| 2026-05-23 | M2-03 begun | Built news + Polymarket + rule-based + LLM correlator + Telegram alerts; node-cron scheduler; persisted JSONL streams. |
+| 2026-05-26 | M2-03 commit 4aed303 | First full end-to-end commit — pipeline producing alerts via local Qwen 3 14B + Telegram. |
+| 2026-05-28 | M2-03 commit be4107c | Follow-up: macro RSS news source (CNBC/Google/MarketWatch), Polymarket volume-desc sort fix, CLI/scheduler pipeline consolidation. Pipeline started firing real Iran-peace + BTC-divergence alerts. |
+| 2026-05-28 | M2-03 commit 0aff0e5 | Scheduler fix: replaced node-cron with sleep-resilient setInterval heartbeat (WSL2 host-sleep was silently dropping `*/15` cron fires during market hours). |
+| 2026-05-28 | **Phase M2-03 COMPLETE** | Acceptance: 7 Telegram alerts validated in production (Iran peace ÷ oil-strike confirm, BTC threshold divergences). Known limitation: PM markets are macro-only — translation layer to single-ticker actions is the M2-04 gap. |
 
 ---
 
@@ -82,7 +83,7 @@
 | Metric | Current | Target |
 |--------|---------|--------|
 | M1 phases complete | 2/6 | (deferred) |
-| M2 phases complete | 0/7 | 7/7 |
+| M2 phases complete | 1/7 | 7/7 |
 | Live broker integrated | No | Yes (M2-02) |
 | News + AI layer | No | Yes (M2-03/04) |
 | Hard risk limits enforced at execution | No | Yes (M2-06) |
@@ -91,6 +92,26 @@
 ---
 
 ## Decisions
+
+### 2026-05-28: M2-03 Closed — Pipeline Validated, Translation Gap Surfaced
+
+**Decision**: Mark M2-03 complete despite the live pipeline only producing macro-level alerts (not single-ticker ones). The remaining gap — turning "Iran peace -4pp" into "buy XLE" — is a separate concern that belongs in M2-04, not in re-scoping M2-03.
+
+**What works (validated in production)**:
+- News pipeline pulls 50/50 ticker-tagged (Finnhub) + macro (CNBC / Google News / MarketWatch RSS)
+- Polymarket client filters by volume to focus on high-conviction macro markets ($1M+ volume)
+- LLM correlator (local Qwen 3 14B via LM Studio) emits HEADLINE_PM_CONFIRMED + HEADLINE_PM_DIVERGENCE alerts
+- Scheduler fires reliably on a sleep-resilient heartbeat (cron replaced 2026-05-28 after WSL2 host-sleep caused silent fire-drops)
+- Real alert caught: Iran peace -4pp DIVERGENCE → 2min later CNBC published "Oil jumps 3% after fresh Iran strikes" CONFIRMED (textbook front-run pattern)
+
+**Known limitations carried into M2-04**:
+- PM markets are macro (Iran / BTC / Fed / Trump) — they map to ETFs (XLE / GLD / QQQ), not single tickers
+- No dedup across related-threshold markets (BTC tanking fires 3 alerts on 3 thresholds)
+- No volume/depth weighting — a 4pp move on $6M market is treated same as 4pp on $300k
+- CONFIRMED alerts fire AFTER the news is public — the alpha is in the prior DIVERGENCE
+- No "fade" frame — every alert is "look here," none is "this is overreaction, fade it"
+
+**Verification**: 13 Telegram alerts fired live across 5/27-5/28. Operator confirmed signal quality matches the architectural intent (PM-as-oracle); the missing piece is per-ticker actionability, which is the explicit M2-04 charter.
 
 ### 2026-05-23: Milestone Pivot (M1 → M2)
 
@@ -142,4 +163,4 @@
 
 ---
 
-*Last updated: 2026-05-23 — Milestone 2 pivot*
+*Last updated: 2026-05-28 — M2-03 closed; entering M2-04 discussion*
