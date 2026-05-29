@@ -1,24 +1,19 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import cron, { type ScheduledTask } from "node-cron";
 import { runCycle, type CycleOptions, type CycleResult } from "./cycle-runner.js";
 
 export interface SchedulerOptions extends Omit<CycleOptions, "dryRun"> {
   /**
-   * Cron expression(s) to run on. Each entry: { expr, timezone, label }.
-   * Defaults to:
-   *   - "Every 15 minutes during US market hours (Mon-Fri 9-16 ET)"
-   *   - "Hourly outside market hours (Mon-Fri off-hours + weekends)"
+   * Cadence in minutes for market hours and off-hours. Defaults:
+   *   - 15 minutes during US market hours (9:00-15:59 ET, Mon-Fri)
+   *   - 60 minutes otherwise (off-hours weekdays + weekends)
    */
-  schedules?: SchedulerEntry[];
+  marketHoursCadenceMin?: number;
+  offHoursCadenceMin?: number;
+  /** Heartbeat interval in seconds. Defaults to 60. */
+  heartbeatSec?: number;
   /** Override data dir for the last-run timestamp file. */
   stateDir?: string;
-}
-
-export interface SchedulerEntry {
-  expr: string;
-  timezone?: string;
-  label: string;
 }
 
 interface SchedulerState {
@@ -27,65 +22,57 @@ interface SchedulerState {
   alertsSentTotal: number;
 }
 
-const DEFAULT_SCHEDULES: SchedulerEntry[] = [
-  {
-    expr: "*/15 9-15 * * 1-5",
-    timezone: "America/New_York",
-    label: "market-hours-15min",
-  },
-  // 16:00-23:59 weekdays + all of Sat-Sun, hourly
-  { expr: "0 16-23 * * 1-5", timezone: "America/New_York", label: "afterhours-weekday" },
-  { expr: "0 0-8 * * 1-5", timezone: "America/New_York", label: "premarket-weekday" },
-  { expr: "0 * * * 0,6", timezone: "America/New_York", label: "weekend-hourly" },
-];
-
 /**
- * Continuously-running scheduler that fires runCycle on configured cron expressions.
- * Persists last-run state so restarts pick up cleanly. Stops on stop() or process exit.
+ * Self-healing intelligence scheduler.
+ *
+ * Uses a periodic heartbeat (setInterval) that, on each tick, computes whether
+ * enough wall-clock time has elapsed since the last successful cycle to fire
+ * another one. This is robust to WSL2 / VM sleep events that compress or skip
+ * cron timers — on wake, the heartbeat sees a stale lastRunAt and fires once,
+ * bringing the intel state current without trying to catch up on every missed
+ * fire.
+ *
+ * Persists last-run state so restarts pick up cleanly.
  */
 export class IntelScheduler {
   private readonly options: SchedulerOptions;
   private readonly stateDir: string;
   private readonly stateFile: string;
-  private readonly tasks: ScheduledTask[] = [];
+  private readonly marketHoursCadenceMs: number;
+  private readonly offHoursCadenceMs: number;
+  private readonly heartbeatMs: number;
   private running = false;
+  private cycleInProgress = false;
+  private interval: NodeJS.Timeout | null = null;
 
   constructor(options: SchedulerOptions) {
     this.options = options;
     this.stateDir = options.stateDir ?? options.dataDir ?? "./data/intel";
     this.stateFile = path.join(this.stateDir, "scheduler-state.json");
+    this.marketHoursCadenceMs = (options.marketHoursCadenceMin ?? 15) * 60_000;
+    this.offHoursCadenceMs = (options.offHoursCadenceMin ?? 60) * 60_000;
+    this.heartbeatMs = (options.heartbeatSec ?? 60) * 1_000;
   }
 
-  /** Start all schedules. Returns once cron tasks are registered. */
+  /** Start the heartbeat. Returns once the timer is registered. */
   async start(onCycle?: (result: CycleResult) => void): Promise<void> {
     if (this.running) return;
     this.running = true;
     await fs.mkdir(this.stateDir, { recursive: true });
 
-    const schedules = this.options.schedules ?? DEFAULT_SCHEDULES;
-    for (const sched of schedules) {
-      const task = cron.schedule(
-        sched.expr,
-        () => {
-          void this.tick(sched.label, onCycle);
-        },
-        { timezone: sched.timezone },
-      );
-      this.tasks.push(task);
-    }
+    const heartbeat = (): void => {
+      void this.heartbeat(onCycle);
+    };
+    this.interval = setInterval(heartbeat, this.heartbeatMs);
   }
 
-  /** Stop all schedules. */
+  /** Stop the heartbeat. */
   stop(): void {
-    for (const t of this.tasks) {
-      try {
-        t.stop();
-      } catch {
-        // ignore
-      }
-    }
-    this.tasks.length = 0;
     this.running = false;
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
   }
 
   /** Force one cycle to run immediately (e.g. on startup). */
@@ -93,7 +80,37 @@ export class IntelScheduler {
     return this.tick("manual", onCycle);
   }
 
-  private async tick(label: string, onCycle?: (result: CycleResult) => void): Promise<CycleResult> {
+  private async heartbeat(onCycle?: (result: CycleResult) => void): Promise<void> {
+    if (!this.running || this.cycleInProgress) return;
+    try {
+      const state = await this.readState();
+      const lastRunAt = state?.lastRunAt ? Date.parse(state.lastRunAt) : null;
+      const now = Date.now();
+      const cadenceMs = isMarketHours(new Date(now))
+        ? this.marketHoursCadenceMs
+        : this.offHoursCadenceMs;
+      const due = lastRunAt === null || now - lastRunAt >= cadenceMs;
+      if (!due) return;
+
+      this.cycleInProgress = true;
+      try {
+        await this.tick("heartbeat", onCycle);
+      } finally {
+        this.cycleInProgress = false;
+      }
+    } catch (err) {
+      this.cycleInProgress = false;
+      console.error(
+        "[intel-scheduler] heartbeat error:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  private async tick(
+    label: string,
+    onCycle?: (result: CycleResult) => void,
+  ): Promise<CycleResult> {
     try {
       const result = await runCycle(this.options);
       await this.persistState(result);
@@ -126,4 +143,26 @@ export class IntelScheduler {
       return null;
     }
   }
+}
+
+/**
+ * Returns true if `d` falls within US equity market hours (9:00-15:59 ET, Mon-Fri).
+ * Uses the cron-style 9-15 hour window — same semantics as the old `*\/15 9-15`
+ * cron expression, which covers the regular session plus the open-auction prep.
+ * Holidays are NOT excluded here; over-polling during a closed session is cheap
+ * (the Polymarket and RSS feeds still produce signal) so we don't filter them.
+ */
+function isMarketHours(d: Date): boolean {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(d);
+  const weekday = parts.find((p) => p.type === "weekday")?.value ?? "";
+  const hourStr = parts.find((p) => p.type === "hour")?.value ?? "0";
+  const hour = Number(hourStr) % 24;
+  if (weekday === "Sat" || weekday === "Sun") return false;
+  return hour >= 9 && hour <= 15;
 }
