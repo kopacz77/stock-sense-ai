@@ -464,6 +464,11 @@ export class MarketDataService {
 
   /**
    * Fetch historical data with enhanced caching (New)
+   *
+   * Provider chain: cache -> Alpha Vantage -> Finnhub -> Yahoo Finance.
+   * Yahoo is the always-available final fallback (no API key, no daily quota),
+   * which is what lets the M2-01 universe prefetch (35 tickers x 8 years)
+   * complete without burning the Alpha Vantage 25-req/day free-tier limit.
    */
   async fetchHistoricalData(
     symbol: string,
@@ -493,12 +498,40 @@ export class MarketDataService {
 
     // Fallback to Finnhub
     if (this.finnhubProvider) {
-      const data = await this.finnhubProvider.fetchHistoricalData(symbol, from, to);
-      await this.cacheManager.setHistoricalData(symbol, from, to, data, 'finnhub');
-      return data;
+      try {
+        const data = await this.finnhubProvider.fetchHistoricalData(symbol, from, to);
+        await this.cacheManager.setHistoricalData(symbol, from, to, data, 'finnhub');
+        return data;
+      } catch (error) {
+        console.warn('Finnhub failed, falling back to Yahoo Finance...', error);
+      }
     }
 
-    throw new Error('No data providers available');
+    // Ultimate fallback: Yahoo Finance (free, no API key, no daily quota)
+    try {
+      console.info(`Falling back to Yahoo Finance for ${symbol} (${from.toISOString().split('T')[0]} -> ${to.toISOString().split('T')[0]})`);
+      const yahooData = await this.yahooFinanceProvider.fetchHistoricalDataRange(symbol, from, to);
+
+      // HistoricalData and OHLCVData are structurally identical (date/open/high/low/close/volume).
+      // Map explicitly to keep the type contract clean and to drop any extra fields.
+      const data: OHLCVData[] = yahooData.map((d) => ({
+        date: d.date,
+        open: d.open,
+        high: d.high,
+        low: d.low,
+        close: d.close,
+        volume: d.volume,
+      }));
+
+      await this.cacheManager.setHistoricalData(symbol, from, to, data, 'yahoo');
+      return data;
+    } catch (yahooError) {
+      const yahooMessage = yahooError instanceof Error ? yahooError.message : 'Unknown error';
+      throw new Error(
+        `Failed to fetch ${symbol} from ${from.toISOString()} to ${to.toISOString()}: ` +
+        `all providers (Alpha Vantage, Finnhub, Yahoo) failed. Last error: ${yahooMessage}`
+      );
+    }
   }
 
   /**
