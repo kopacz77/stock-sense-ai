@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-04 LLM Trade-Signal Layer (in progress — Wave 1 plan 10-01 ✅ complete; 10-02..10-07 pending) |
-| Status | M2-04 foundation landed: 6 config seeds + shared types module (src/market-intelligence/signal/types.ts, 9 named contracts) + FRED Zod schema diff. Wave 2 plans (10-03/04/05) unblocked. |
+| Current Phase | M2-04 LLM Trade-Signal Layer (in progress — 10-01 ✅; 10-04 ✅; 10-02/03/05/06/07 pending) |
+| Status | M2-04 Wave 2 progress: PmMappingEngine (Plan 10-04) landed with 8/8 unit tests green — turns -4pp Iran ceasefire move into +4 XLE contribution deterministically. Plan 10-05 RollupBuilder unblocked on the PM-contribution side. |
 | Last Pivot | 2026-05-23 |
 | Last Updated | 2026-05-31 |
 
@@ -41,15 +41,14 @@
 
 ## Active Work
 
-**Current Focus**: M2-04 LLM Trade-Signal Layer in progress. Wave 1 plan 10-01 (foundation: types + config seeds + Zod diff) ✅ complete. Next: 10-02 LLM client (Wave 1 sibling), then Wave 2 fan-out (10-03 ArticleScorer, 10-04 CalendarFetchers, 10-05 PmMappingEngine).
+**Current Focus**: M2-04 LLM Trade-Signal Layer in progress. Wave 1 plan 10-01 ✅. Plan 10-04 (PmMappingEngine) ✅. Wave 2 siblings 10-02 (LLM client) and 10-03 (ArticleScorer) appear to be in flight (untracked working files present: `src/market-intelligence/signal/article-scorer.ts`, `src/market-intelligence/signal/calendar/`).
 
 **Blocking Issues**: None.
 
 **Next Actions**:
-1. Execute plan 10-02 (LLM client) — Wave 1 sibling, only depends on the FRED Zod diff (which is now landed).
-2. Execute Wave 2 plans (10-03, 10-04, 10-05) in parallel — all three import from `src/market-intelligence/signal/types.ts` only, no cross-imports between Wave 2 modules.
-3. Execute Wave 3 (10-06 RollupBuilder, 10-07 DigestBuilder) — consumes outputs of Wave 2.
-4. Operator manual setup (deferred, not blockers): fill `config/fda-pdufa-seed.json` quarterly, `config/opec-schedule-seed.json` annually, add FRED key to encrypted config if calendar fetchers need it.
+1. Close out Wave 2 siblings 10-02 (LLM client) and 10-03 (ArticleScorer / CalendarFetchers) — both have untracked working files in `src/market-intelligence/signal/` indicating in-flight executor agents.
+2. Execute Wave 3 (10-05 RollupBuilder, 10-06 DigestBuilder, 10-07 review CLI) — RollupBuilder is now unblocked on PM contributions (Plan 10-04 landed) and will block on the Wave 2 scored-articles + calendar streams.
+3. Operator manual setup (deferred, not blockers): fill `config/fda-pdufa-seed.json` quarterly, `config/opec-schedule-seed.json` annually, add FRED key to encrypted config if calendar fetchers need it.
 
 **M2-05 scope grows** (carried over from M2-01 verdict): previous assumption was "layer AI on top of MomentumStrategy + MeanReversionStrategy". With both DISCARD'd, M2-05 must design fresh signals first (catalyst-driven entries from M2-04, volatility-breakout, sector-rotation rules). Plan M2-05 phase scoping when M2-04 is closer to done.
 
@@ -84,6 +83,7 @@
 | 2026-05-30 | Plan 07-06 | Built `scripts/m201-build-recommendation.ts` (~700 lines) and produced `.planning/phases/07-strategy-reality-check/RECOMMENDATION.md` (214 lines, commit 9d8c78a). Both MomentumStrategy + MeanReversionStrategy formally DISCARD'd against the CONTEXT.md pass/fail bar. Momentum: 0/35 KEEP at best config (shortMA=10, minConfidence=65), bear Sharpe -0.70 invariant to params. MeanRev: 1/35 KEEP (LLY — sample noise) at best config (rsiOversold=20, rsiOverbought=70), bear Sharpe -0.35, high-vol \|MaxDD\| 32.8%. Engine finding surfaced as side-effect of sensitivity analysis: MomentumStrategy ignores `shortMA` entirely (5 values produce byte-identical Sharpe — param exposed but not consumed). M2-05 scope grows: design fresh signals (catalyst-driven, vol-breakout, sector-rotation) BEFORE AI layering. **M2-01 phase ✅ COMPLETE — 6/6 plans done with 100% success rate.** |
 | 2026-05-30 | **Phase M2-01 COMPLETE** | Acceptance: per CONTEXT.md success criterion 4 ("at least one strategy demonstrates Sharpe>0.5 and MaxDD<25% across all regimes — OR — both are formally rejected with documented evidence"), the second branch is satisfied. RECOMMENDATION.md documents both rejections with per-regime Sharpe / MaxDD / win-rate medians across the 35-ticker universe. Operator can now move forward with the M2-04 / M2-05 path. |
 | 2026-05-31 | Plan 10-01 | M2-04 foundation: 6 config JSON seeds in `config/` (themes×24, themes-rejected, macro-tickers×24, pm-market-mappings×3+proposed[], fda-pdufa-seed, opec-schedule-seed), shared types module `src/market-intelligence/signal/types.ts` (258 lines, 12 exports including 9 named contracts ScoredArticle / CatalystFlag / CalendarEvent / TickerDaySummary / ThemeCandidate / PmMapping / PmMappingProposal / DigestPayload / ScoreBacklogEntry), and `apis.fred?` added to ConfigSchema (commits c5a957d, 7c41a06). `pnpm tsc --noEmit` clean. Wave 2 plans (10-03/04/05) unblocked — they all import from this types module only, no cross-imports between Wave 2 modules. |
+| 2026-05-31 | Plan 10-04 | PmMappingEngine landed (commit 65a3144). `src/market-intelligence/signal/pm-mapping-engine.ts` (~230 lines) with `mapMarket()` / `mapMarkets()` / `invalidateCache()` / `mappingCount()`. Match precedence eventSlug → slugPrefix → questionContains, all populated criteria must match, all-null rules refuse to fire. Sign math as single 4-factor product `movePp × dirSign × weight × interpSign` — noPp inversion is a single ±1 flip. EXCLUSION_KEYWORDS bypass runs before mapping (sports/entertainment markets generate neither signals nor proposals). Unmatched markets persist as `PmMappingProposal` shell records with `proposedTickers: []` for the Plan 10-02 article scorer's LLM fallback to enrich. 8 vitest cases all green on first run, covering: Iran ceasefire noPp inversion (-4pp → +4 XLE), BTC slugPrefix, Fed multi-field, unmatched → proposal persist, EXCLUSION_KEYWORDS bypass, all-null refusal, multi-rule stacking, cache + invalidateCache reload. `pnpm tsc --noEmit` clean. Plan 10-05 RollupBuilder unblocked on the PM-contribution side. |
 
 ---
 
@@ -101,6 +101,27 @@
 ---
 
 ## Decisions
+
+### 2026-05-31: Plan 10-04 — PmMappingEngine (Table-Driven PM-to-Ticker Signals with noPp Inversion)
+
+**Decision**: Build `PmMappingEngine` (`src/market-intelligence/signal/pm-mapping-engine.ts`) as a stateless, LLM-free, table-driven matcher. Match precedence: `eventSlug` exact → `slugPrefix` case-insensitive → `questionContains` case-insensitive substring; all populated criteria must match for a rule to fire. Sign math factored as a single 4-factor product `contributedScore = movePp × dirSign × weight × interpSign` where `interpSign = noPp ? -1 : +1`. Unmatched markets persist as `PmMappingProposal` shell records (empty `proposedTickers: []`) for the Plan 10-02 article scorer's LLM fallback to enrich later.
+
+**Rationale**:
+- Single-product sign math (vs branching on interpretation) means noPp inversion is a single ±1 factor like direction sign — easier to reason about, harder to invert one branch and not the other when the operator adds new mappings.
+- All-null mapping rules refuse to match anything. A `{ eventSlug: null, slugPrefix: null, questionContains: null }` rule would otherwise saturate every ticker; operator could land it by accident via JSON edit. Defense at the matcher rather than at config-validation time so this safety holds even if config validation regresses.
+- EXCLUSION_KEYWORDS filter runs BEFORE the mapping pass (not after). Plan 10-07's review CLI reads the proposals stream; if excluded markets created proposals, the operator would wade through Iran-FIFA / Super-Bowl-Trump / Oscars-AI noise weekly. Filtering before keeps the proposals queue high-signal.
+- Engine deliberately LLM-free. Plan 10-02's article scorer is the LLM proposal source (it already sees PM context per article); both writers persist to the same `pm-mappings-proposed-*.jsonl` stream, and Plan 10-07's review CLI dedupes by `marketId` and merges `proposedTickers` arrays. Keeping the engine deterministic means no model warmup, no rate limit, and the engine can run on every scheduler tick.
+- `invalidateCache()` escape hatch exists for the post-review-CLI write-back flow. Long-running pipeline shouldn't re-read JSON every call but the review CLI must be able to force reload after writing.
+- Result type is a discriminated union `{ excluded } | { unmatched } | { tickerSignals[] }` rather than a nullable list — caller switches on the discriminator rather than parsing a null-vs-empty distinction.
+
+**Sign math worked example (Iran ceasefire)**: mapping `noPp` with XLE long w=1.0; snapshot oneHourPriceChange=-0.04 (-4pp). `contributedScore = -4 × +1 × 1.0 × -1 = +4` (bullish XLE because Yes resolves = ceasefire holds = bearish energy, so Yes falling is bullish). Matches the canonical M2-03 alert that fired live 2026-05-27.
+
+**Verification**: 8/8 vitest cases pass on first run in 27ms; covers eventSlug+noPp inversion, slugPrefix+yesPp, multi-field (slugPrefix AND questionContains), no-match → proposal persistence to JSONL, EXCLUSION_KEYWORDS bypass with no proposal, all-null catch-all refusal, multi-rule stacking on one market (AAA appearing in two rules sums correctly), and cache + `invalidateCache()` reload semantics. `pnpm tsc --noEmit` exit 0.
+
+**Carry-over for Wave 3**:
+- Plan 10-05 `RollupBuilder` integration shape: `const { tickerSignals, proposals, excludedCount } = await pmEngine.mapMarkets(todaysSnapshots);` — group by ticker, sum `contributedScore` per group → `TickerDaySummary.pmContribution.netScore`. Proposals are already persisted to disk; the rollup builder doesn't need to handle them.
+- Plan 10-07 `intel pm-mappings review` CLI should display `interpretation` as a labeled badge ("Yes rising = bearish for the listed tickers (noPp inversion)") rather than just printing the raw string — otherwise operator may approve a mapping whose sign they misread. The Iran ceasefire mapping is the canonical example where the inversion is non-obvious.
+- Seed mappings as of this plan: 3 (Iran ceasefire eventSlug, will-bitcoin-reach-* slugPrefix, fed-decision-in-* + "rate cut" combined). Operator can extend `config/pm-market-mappings.json` directly; engine will pick up new mappings on next process restart or after explicit `invalidateCache()`.
 
 ### 2026-05-31: Plan 10-01 — M2-04 Foundation (Types + Config Seeds + FRED Zod Diff)
 
@@ -308,4 +329,4 @@
 
 ---
 
-*Last updated: 2026-05-31 — Plan 10-01 complete; M2-04 LLM Trade-Signal Layer foundation landed (6 config seeds + shared types module + FRED Zod diff). `pnpm tsc --noEmit` clean. Wave 2 plans (10-03/04/05) unblocked — they all import from `src/market-intelligence/signal/types.ts` only, no cross-imports. Next: 10-02 (LLM client, Wave 1 sibling), then Wave 2 fan-out.*
+*Last updated: 2026-05-31 — Plan 10-04 complete; PmMappingEngine landed (commit 65a3144) with 8/8 unit tests green. Iran ceasefire canonical noPp inversion verified end-to-end (-4pp Yes drop → +4 bullish XLE). `pnpm tsc --noEmit` clean. Plan 10-05 RollupBuilder unblocked on the PM-contribution side. Wave 2 siblings 10-02 + 10-03 in flight (untracked working files present in `src/market-intelligence/signal/`).*
