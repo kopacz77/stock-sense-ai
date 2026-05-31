@@ -22,6 +22,7 @@ const ConfigSchema = z.object({
     alphaVantage: z.string().min(1, "Alpha Vantage API key is required"),
     finnhub: z.string().min(1, "Finnhub API key is required"),
     newsApi: z.string().optional(),
+    fred: z.string().optional(),
   }),
   notifications: z.object({
     email: z
