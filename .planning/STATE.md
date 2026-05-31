@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-01 Strategy Reality Check (Plans 07-01..07-05 complete; 07-06 pending) + M2-03 done + M2-04 next |
-| Status | 07-05 reality-check sweep complete; 1050/1050 backtests succeeded (35 tickers × 2 strategies × 15 params), results.jsonl 3.5 MB; engine + adapter bugs fixed inline; aggregate avg bull Sharpe +0.62, bear -0.43 |
+| Current Phase | M2-01 Strategy Reality Check ✅ COMPLETE (07-01..07-06 all done); M2-03 done; M2-04 next |
+| Status | M2-01 deliverable RECOMMENDATION.md produced: both MomentumStrategy + MeanReversionStrategy formally DISCARD'd against the CONTEXT.md pass/fail bar. M2-05 scope grows (fresh signal design needed before AI layering). |
 | Last Pivot | 2026-05-23 |
 | Last Updated | 2026-05-30 |
 
@@ -29,7 +29,7 @@
 
 | Phase | Name | Status | Started | Completed |
 |-------|------|--------|---------|-----------|
-| M2-01 | Strategy Reality Check | pending | — | — |
+| M2-01 | Strategy Reality Check | ✅ COMPLETE | 2026-05-30 | 2026-05-30 |
 | M2-02 | Alpaca Paper Integration | pending | — | — |
 | M2-03 | Market Intelligence Bot | ✅ COMPLETE | 2026-05-23 | 2026-05-28 |
 | M2-04 | LLM Trade-Signal Layer | pending | — | — |
@@ -41,16 +41,17 @@
 
 ## Active Work
 
-**Current Focus**: M2-03 closed. Next: discuss scope for M2-04 LLM Trade-Signal Layer.
+**Current Focus**: M2-01 ✅ closed. M2-03 ✅ closed. Next: discuss scope for M2-04 LLM Trade-Signal Layer with M2-01 verdict context (both technical strategies DISCARD'd → LLM is doing more load-bearing work).
 
 **Blocking Issues**: None.
 
 **Next Actions**:
 1. Run `/gsd:discuss-phase` for M2-04 to align scope. Roadmap currently scopes M2-04 as per-ticker sentiment / theme tagging / catalyst flags — but live M2-03 alerts surfaced an additional gap: PM markets are macro (Iran / BTC / Fed / Trump) and map to ETFs/sectors, not single tickers. M2-04 scope likely needs to grow to include PM-market→ticker translation, depth-weighted conviction, and dedup across related markets.
-2. Plan M2-04 (`/gsd:plan-phase`) producing PLAN.md with PM-to-ticker mapping decisions baked in.
-3. Execute M2-04.
+2. **M2-01 verdict context for M2-04**: with both MomentumStrategy + MeanReversionStrategy DISCARD'd, M2-04's LLM-derived catalyst signals become more critical to M2-05 (no working technical baseline to layer on). M2-04 should still focus on its charter (news + PM + catalyst tagging), but its output is now M2-05's primary signal source, not a filter on top of technicals.
+3. Plan M2-04 (`/gsd:plan-phase`) producing PLAN.md with PM-to-ticker mapping decisions baked in AND the M2-01 verdict context (LLM is primary, not overlay).
+4. Execute M2-04.
 
-**Parallel track (lower priority)**: M2-01 Strategy Reality Check — Plans 07-01/02/03/04/05 complete. Plan 05 sweep landed 1050/1050 backtests with full + per-regime metrics at `.planning/phases/07-strategy-reality-check/results.jsonl` (3.5 MB). Next is 07-06 (RECOMMENDATION.md generator that aggregates results.jsonl into KEEP/MODIFY/DISCARD calls per ticker × strategy). Engine + adapter bugs fixed inline (history-to-date, newest-first contract, 300-bar window cap) so future SimpleBacktestEngine runs are functional.
+**M2-05 scope grows** (carried over from M2-01 verdict): previous assumption was "layer AI on top of MomentumStrategy + MeanReversionStrategy". With both DISCARD'd, M2-05 must design fresh signals first (catalyst-driven entries from M2-04, volatility-breakout, sector-rotation rules). Plan M2-05 phase scoping when M2-04 is closer to done.
 
 ---
 
@@ -80,6 +81,8 @@
 | 2026-05-31 | Plan 07-04 | Built `regime-segmenter.ts` (commit ff925db) with REGIMES constant + sliceByRegime + metricsByRegime. Per-sub-window daily-return recomputation drops cross-window jump returns (Sharpe stays sane on discontinuous bull = 2019+2020-H2+2023+2024 windows); maxDrawdown selected as worst per-sub-window. 12 vitest unit tests landed (commit ea9c40d), including a "100k→180k cross-window jump" test that demonstrably proves volatility stays <1.0. Plan 05 reality-check runner now has its per-regime metrics dependency. |
 | 2026-05-31 | Plan 07-03 | Prefetched 35-ticker M2-01 universe across 2018-01-01 -> 2025-12-31 via Yahoo fallback (commits 6f531f3 + 428033f). Added `scripts/m201-prefetch-universe.ts` (batched 10/10/10/5 runner, per-symbol retry-once) and `scripts/m201-prefetch-report.ts` (cache-hit-only analyzer). 35/35 tickers came back OK with 2010 bars each, gap 0.30% (NYSE-calendar-vs-252/yr rounding noise, not data degradation). META historical continuity confirmed across the 2022 FB->META rename — no symbol-switch needed. Total cache: 14MB under `data/cache/historical/`. Per-ticker quality report at `.planning/phases/07-strategy-reality-check/07-03-prefetch-report.md`. |
 | 2026-05-30 | Plan 07-05 | Built `scripts/m201-reality-check.ts` (~445 lines) and ran the full 1050-backtest sweep (35 tickers × 2 strategies × 15 params, 2018-2025, FixedBPSSlippageModel(5) + FixedCommissionModel(0)) in 35:24 with 100% success and 0 errors (commits be06560, 748db48). Output `.planning/phases/07-strategy-reality-check/results.jsonl` 3.5 MB. Fixed 3 latent bugs inline (Rule 1): SimpleBacktestEngine was passing `[bar]` instead of history-to-date to strategy.onBar (every indicator-based strategy threw "Insufficient historical data" → 0 trades), StrategyAdapter was passing bars in engine order but strategies expect newest-first (SELL signals fired against 2018 prices in 2025 → 0 closed trades), and the adapter passed full 2010-bar history per call (O(N²) work, sweep would take 140 min). Capped history at 300 bars → 4× speedup. Aggregate result: avg bull Sharpe +0.62, bear -0.43, highVol +0.16 across all 1050 backtests — clean per-regime signature that confirms Plan 04's regime segmenter is doing real work. Plan 06 (RECOMMENDATION.md) is now unblocked. |
+| 2026-05-30 | Plan 07-06 | Built `scripts/m201-build-recommendation.ts` (~700 lines) and produced `.planning/phases/07-strategy-reality-check/RECOMMENDATION.md` (214 lines, commit 9d8c78a). Both MomentumStrategy + MeanReversionStrategy formally DISCARD'd against the CONTEXT.md pass/fail bar. Momentum: 0/35 KEEP at best config (shortMA=10, minConfidence=65), bear Sharpe -0.70 invariant to params. MeanRev: 1/35 KEEP (LLY — sample noise) at best config (rsiOversold=20, rsiOverbought=70), bear Sharpe -0.35, high-vol \|MaxDD\| 32.8%. Engine finding surfaced as side-effect of sensitivity analysis: MomentumStrategy ignores `shortMA` entirely (5 values produce byte-identical Sharpe — param exposed but not consumed). M2-05 scope grows: design fresh signals (catalyst-driven, vol-breakout, sector-rotation) BEFORE AI layering. **M2-01 phase ✅ COMPLETE — 6/6 plans done with 100% success rate.** |
+| 2026-05-30 | **Phase M2-01 COMPLETE** | Acceptance: per CONTEXT.md success criterion 4 ("at least one strategy demonstrates Sharpe>0.5 and MaxDD<25% across all regimes — OR — both are formally rejected with documented evidence"), the second branch is satisfied. RECOMMENDATION.md documents both rejections with per-regime Sharpe / MaxDD / win-rate medians across the 35-ticker universe. Operator can now move forward with the M2-04 / M2-05 path. |
 
 ---
 
@@ -88,7 +91,7 @@
 | Metric | Current | Target |
 |--------|---------|--------|
 | M1 phases complete | 2/6 | (deferred) |
-| M2 phases complete | 1/7 | 7/7 |
+| M2 phases complete | 2/7 | 7/7 |
 | Live broker integrated | No | Yes (M2-02) |
 | News + AI layer | No | Yes (M2-03/04) |
 | Hard risk limits enforced at execution | No | Yes (M2-06) |
@@ -97,6 +100,33 @@
 ---
 
 ## Decisions
+
+### 2026-05-30: Plan 07-06 — M2-01 RECOMMENDATION.md Produced; Both Strategies DISCARD; M2-05 Scope Grows
+
+**Decision**: Build `scripts/m201-build-recommendation.ts` as a results.jsonl-driven generator that applies the CONTEXT.md verdict logic (KEEP / MODIFY / DISCARD) per-record AND per-aggregate, and writes the M2-01 final deliverable `RECOMMENDATION.md`. Both MomentumStrategy and MeanReversionStrategy are formally DISCARD'd. M2-05 path forward: design fresh signals from scratch (catalyst-driven, vol-breakout, sector-rotation) rather than AI-layering on broken technical signals.
+
+**Rationale**:
+- Per CONTEXT.md success criterion 4 ("at least one strategy demonstrates Sharpe>0.5 and MaxDD<25% across all regimes — OR — both are formally rejected with documented evidence"), the *evidence* matters as much as the verdict. A generator script makes the verdict reproducible from raw JSONL (re-run on any future sweep), and uses a single `judgeRegimes()` source of truth for both per-record and aggregate verdicts.
+- Strategy-level aggregation uses universe-median Sharpe / |MaxDD| at the best config (most permissive form of the bar — "does the strategy have edge across the median ticker"). Both strategies still DISCARD at this more permissive bar, which is the strongest possible negative signal: if even the median ticker fails at the best config, individual tickers won't recover the result.
+- `Math.abs(maxDrawdown)` applied at every threshold comparison (RESEARCH pitfall #8 — `PerformanceMetricsCalculator` emits maxDrawdown as signed-negative).
+- Low-trade-flag (<10 trades/year) per RESEARCH pitfall #6 — at 35/35 momentum and 35/35 mean-rev tickers under 10 trades/year, all "winning" KEEPs are buy-and-hold proxies, further weakening the case for these strategies.
+- Best-config picker: highest keepCount across universe, tiebreak by highest median bull Sharpe. For DISCARD strategies (zero KEEPs everywhere) the tiebreaker carries — which is why the chosen "best" configs report 0/35 and 1/35 KEEPs but represent the least-bad parameter setting.
+
+**Final verdicts**:
+- **MomentumStrategy: DISCARD.** Best config (shortMA=10, longMA=75, minConfidence=65). Universe-median bull Sharpe +0.62 (passes the 0.5 bar) but bear Sharpe -0.70 with |DD| 19.8% (fails on Sharpe) and high-vol Sharpe only +0.12 (fails on Sharpe). No parameter combination from the sweep changes the bear-regime failure — it's invariant across all 15 configs.
+- **MeanReversionStrategy: DISCARD.** Best config (rsiOversold=20, rsiOverbought=70). Universe-median bull Sharpe +0.81 (passes), bear Sharpe -0.35 (fails on Sharpe), high-vol |MaxDD| 32.8% (fails on drawdown). Only LLY passes all 3 regimes (1/35), which at this scale is almost certainly sample noise — LLY's pharma-driven trajectory leaks through the sparse signal rather than the signal earning the return.
+
+**Engine finding surfaced as side-effect**: **MomentumStrategy ignores `shortMA` entirely.** Sweeping 5 values × 35 tickers × 3 minConfidence levels = 525 backtests with byte-identical Sharpe per (ticker, minConfidence) tuple as shortMA varies. The parameter is in the strategy's options interface but not consumed by the indicator computation. Effective dimensionality of the Momentum grid was 1, not 2. Documented in RECOMMENDATION.md `Engine / Strategy Findings` section. Not auto-fixed (out of scope; the verdict is bad regardless and future strategy work should design fresh signals, not patch MomentumStrategy).
+
+**Downstream implications**:
+- **M2-04 (LLM Trade-Signal Layer)**: charter unchanged but importance grows. With no working technical baseline, M2-04's LLM-derived catalyst signals are doing more load-bearing work. M2-03's live alerts (Iran peace, BTC threshold divergences) prove catalyst-driven signals can be sourced.
+- **M2-05 (AI-Augmented Strategy Engine)**: phase scope materially grows. Previous assumption was "layer AI on top of MomentumStrategy + MeanReversionStrategy" — both DISCARD'd, so this isn't the right shape. M2-05 needs to design fresh signals first: catalyst-driven entries (from M2-04), volatility-breakout (real-time vol regime detection), sector-rotation rules (rotate into sectors where M2-04 catalyst flow is densest). M2-04 output becomes M2-05's primary signal source.
+
+**Verification**: 1,050/1,050 records consumed cleanly. NVDA momentum (shortMA=10, minConfidence=55) hand-cross-checked: bear |DD|=37.6% > 35% → DISCARD by `anyRegimeMaxDDover35` rule, matches script output. Aggregate per-regime Sharpe across all records: bull +0.62, bear -0.43, highVol +0.16 — matches the headline numbers reported by Plan 05 byte-for-byte.
+
+**Carry-over for next phases**:
+- `RECOMMENDATION.md` at `.planning/phases/07-strategy-reality-check/RECOMMENDATION.md` is the M2-01 deliverable. Operator should read this before scoping M2-04 / M2-05.
+- M2-01 phase **COMPLETE** (6/6 plans, 100% success rate end-to-end).
 
 ### 2026-05-30: Plan 07-05 — Reality-Check Sweep Complete (1050/1050) + Engine/Adapter Bugs Fixed Inline
 
@@ -257,4 +287,4 @@
 
 ---
 
-*Last updated: 2026-05-30 — Plan 07-05 complete (1050/1050 reality-check backtests landed in 35:24 with 100% success; 3 latent engine/adapter bugs fixed inline; aggregate per-regime signature: bull +0.62 / bear -0.43 / highVol +0.16); Plan 07-06 (RECOMMENDATION.md) unblocked; M2-04 discussion still pending*
+*Last updated: 2026-05-30 — Plan 07-06 complete; **M2-01 phase ✅ COMPLETE** (6/6 plans, 100% success rate end-to-end). RECOMMENDATION.md produced — both MomentumStrategy + MeanReversionStrategy formally DISCARD'd against CONTEXT.md pass/fail bar (momentum: 0/35 KEEP, bear Sharpe -0.70 invariant; mean-rev: 1/35 KEEP — LLY sample noise, bear Sharpe -0.35, high-vol |MaxDD| 32.8%). M2-05 scope grows: design fresh signals (catalyst-driven, vol-breakout, sector-rotation) before AI layering. Engine finding: MomentumStrategy.shortMA exposed-but-ignored. Next: M2-04 discussion with this verdict context (LLM is M2-05's primary signal, not overlay).*
