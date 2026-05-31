@@ -5,10 +5,10 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-01 Strategy Reality Check ✅ COMPLETE (07-01..07-06 all done); M2-03 done; M2-04 next |
-| Status | M2-01 deliverable RECOMMENDATION.md produced: both MomentumStrategy + MeanReversionStrategy formally DISCARD'd against the CONTEXT.md pass/fail bar. M2-05 scope grows (fresh signal design needed before AI layering). |
+| Current Phase | M2-04 LLM Trade-Signal Layer (in progress — Wave 1 plan 10-01 ✅ complete; 10-02..10-07 pending) |
+| Status | M2-04 foundation landed: 6 config seeds + shared types module (src/market-intelligence/signal/types.ts, 9 named contracts) + FRED Zod schema diff. Wave 2 plans (10-03/04/05) unblocked. |
 | Last Pivot | 2026-05-23 |
-| Last Updated | 2026-05-30 |
+| Last Updated | 2026-05-31 |
 
 ---
 
@@ -32,7 +32,7 @@
 | M2-01 | Strategy Reality Check | ✅ COMPLETE | 2026-05-30 | 2026-05-30 |
 | M2-02 | Alpaca Paper Integration | pending | — | — |
 | M2-03 | Market Intelligence Bot | ✅ COMPLETE | 2026-05-23 | 2026-05-28 |
-| M2-04 | LLM Trade-Signal Layer | pending | — | — |
+| M2-04 | LLM Trade-Signal Layer | in progress | 2026-05-31 | — |
 | M2-05 | AI-Augmented Strategy Engine | pending | — | — |
 | M2-06 | Hard Risk Management | pending | — | — |
 | M2-07 | Live Execution + Tax Tracking | pending | — | — |
@@ -41,15 +41,15 @@
 
 ## Active Work
 
-**Current Focus**: M2-01 ✅ closed. M2-03 ✅ closed. Next: discuss scope for M2-04 LLM Trade-Signal Layer with M2-01 verdict context (both technical strategies DISCARD'd → LLM is doing more load-bearing work).
+**Current Focus**: M2-04 LLM Trade-Signal Layer in progress. Wave 1 plan 10-01 (foundation: types + config seeds + Zod diff) ✅ complete. Next: 10-02 LLM client (Wave 1 sibling), then Wave 2 fan-out (10-03 ArticleScorer, 10-04 CalendarFetchers, 10-05 PmMappingEngine).
 
 **Blocking Issues**: None.
 
 **Next Actions**:
-1. Run `/gsd:discuss-phase` for M2-04 to align scope. Roadmap currently scopes M2-04 as per-ticker sentiment / theme tagging / catalyst flags — but live M2-03 alerts surfaced an additional gap: PM markets are macro (Iran / BTC / Fed / Trump) and map to ETFs/sectors, not single tickers. M2-04 scope likely needs to grow to include PM-market→ticker translation, depth-weighted conviction, and dedup across related markets.
-2. **M2-01 verdict context for M2-04**: with both MomentumStrategy + MeanReversionStrategy DISCARD'd, M2-04's LLM-derived catalyst signals become more critical to M2-05 (no working technical baseline to layer on). M2-04 should still focus on its charter (news + PM + catalyst tagging), but its output is now M2-05's primary signal source, not a filter on top of technicals.
-3. Plan M2-04 (`/gsd:plan-phase`) producing PLAN.md with PM-to-ticker mapping decisions baked in AND the M2-01 verdict context (LLM is primary, not overlay).
-4. Execute M2-04.
+1. Execute plan 10-02 (LLM client) — Wave 1 sibling, only depends on the FRED Zod diff (which is now landed).
+2. Execute Wave 2 plans (10-03, 10-04, 10-05) in parallel — all three import from `src/market-intelligence/signal/types.ts` only, no cross-imports between Wave 2 modules.
+3. Execute Wave 3 (10-06 RollupBuilder, 10-07 DigestBuilder) — consumes outputs of Wave 2.
+4. Operator manual setup (deferred, not blockers): fill `config/fda-pdufa-seed.json` quarterly, `config/opec-schedule-seed.json` annually, add FRED key to encrypted config if calendar fetchers need it.
 
 **M2-05 scope grows** (carried over from M2-01 verdict): previous assumption was "layer AI on top of MomentumStrategy + MeanReversionStrategy". With both DISCARD'd, M2-05 must design fresh signals first (catalyst-driven entries from M2-04, volatility-breakout, sector-rotation rules). Plan M2-05 phase scoping when M2-04 is closer to done.
 
@@ -83,6 +83,7 @@
 | 2026-05-30 | Plan 07-05 | Built `scripts/m201-reality-check.ts` (~445 lines) and ran the full 1050-backtest sweep (35 tickers × 2 strategies × 15 params, 2018-2025, FixedBPSSlippageModel(5) + FixedCommissionModel(0)) in 35:24 with 100% success and 0 errors (commits be06560, 748db48). Output `.planning/phases/07-strategy-reality-check/results.jsonl` 3.5 MB. Fixed 3 latent bugs inline (Rule 1): SimpleBacktestEngine was passing `[bar]` instead of history-to-date to strategy.onBar (every indicator-based strategy threw "Insufficient historical data" → 0 trades), StrategyAdapter was passing bars in engine order but strategies expect newest-first (SELL signals fired against 2018 prices in 2025 → 0 closed trades), and the adapter passed full 2010-bar history per call (O(N²) work, sweep would take 140 min). Capped history at 300 bars → 4× speedup. Aggregate result: avg bull Sharpe +0.62, bear -0.43, highVol +0.16 across all 1050 backtests — clean per-regime signature that confirms Plan 04's regime segmenter is doing real work. Plan 06 (RECOMMENDATION.md) is now unblocked. |
 | 2026-05-30 | Plan 07-06 | Built `scripts/m201-build-recommendation.ts` (~700 lines) and produced `.planning/phases/07-strategy-reality-check/RECOMMENDATION.md` (214 lines, commit 9d8c78a). Both MomentumStrategy + MeanReversionStrategy formally DISCARD'd against the CONTEXT.md pass/fail bar. Momentum: 0/35 KEEP at best config (shortMA=10, minConfidence=65), bear Sharpe -0.70 invariant to params. MeanRev: 1/35 KEEP (LLY — sample noise) at best config (rsiOversold=20, rsiOverbought=70), bear Sharpe -0.35, high-vol \|MaxDD\| 32.8%. Engine finding surfaced as side-effect of sensitivity analysis: MomentumStrategy ignores `shortMA` entirely (5 values produce byte-identical Sharpe — param exposed but not consumed). M2-05 scope grows: design fresh signals (catalyst-driven, vol-breakout, sector-rotation) BEFORE AI layering. **M2-01 phase ✅ COMPLETE — 6/6 plans done with 100% success rate.** |
 | 2026-05-30 | **Phase M2-01 COMPLETE** | Acceptance: per CONTEXT.md success criterion 4 ("at least one strategy demonstrates Sharpe>0.5 and MaxDD<25% across all regimes — OR — both are formally rejected with documented evidence"), the second branch is satisfied. RECOMMENDATION.md documents both rejections with per-regime Sharpe / MaxDD / win-rate medians across the 35-ticker universe. Operator can now move forward with the M2-04 / M2-05 path. |
+| 2026-05-31 | Plan 10-01 | M2-04 foundation: 6 config JSON seeds in `config/` (themes×24, themes-rejected, macro-tickers×24, pm-market-mappings×3+proposed[], fda-pdufa-seed, opec-schedule-seed), shared types module `src/market-intelligence/signal/types.ts` (258 lines, 12 exports including 9 named contracts ScoredArticle / CatalystFlag / CalendarEvent / TickerDaySummary / ThemeCandidate / PmMapping / PmMappingProposal / DigestPayload / ScoreBacklogEntry), and `apis.fred?` added to ConfigSchema (commits c5a957d, 7c41a06). `pnpm tsc --noEmit` clean. Wave 2 plans (10-03/04/05) unblocked — they all import from this types module only, no cross-imports between Wave 2 modules. |
 
 ---
 
@@ -91,7 +92,7 @@
 | Metric | Current | Target |
 |--------|---------|--------|
 | M1 phases complete | 2/6 | (deferred) |
-| M2 phases complete | 2/7 | 7/7 |
+| M2 phases complete | 2/7 (M2-04 in progress, 1/7 plans done) | 7/7 |
 | Live broker integrated | No | Yes (M2-02) |
 | News + AI layer | No | Yes (M2-03/04) |
 | Hard risk limits enforced at execution | No | Yes (M2-06) |
@@ -100,6 +101,26 @@
 ---
 
 ## Decisions
+
+### 2026-05-31: Plan 10-01 — M2-04 Foundation (Types + Config Seeds + FRED Zod Diff)
+
+**Decision**: Land all M2-04 foundation files in one plan so Wave 2 can fan out without contract churn — 6 config JSON seeds in `config/`, one shared types module `src/market-intelligence/signal/types.ts` with 9 named contracts + util unions, and a one-line Zod schema extension (`apis.fred?: z.string().optional()`).
+
+**Rationale**:
+- Wave 2 plans (10-03 ArticleScorer, 10-04 CalendarFetchers, 10-05 PmMappingEngine) all need to read/write these contracts. If types or config shapes drift mid-phase, parallel work explodes.
+- One shared types module (rather than each Wave 2 module owning its own types) keeps the type graph shallow — only news/types and polymarket/types are imported transitively, no cross-imports between Wave 2 modules.
+- 24 canonical themes derived from `relevance-filter.ts` topic keys with finer-grained per-domain splits where directional bias matters (e.g. `fed-rate-cuts` vs `fed-rate-hikes`, `crypto-rally` vs `crypto-selloff`, `earnings-beat` vs `earnings-miss`). Collapsing into single per-domain themes would lose the directional signal the per-article scorer needs.
+- `CalendarEvent` emitted as type alias of `CatalystFlag` rather than distinct interface — same shape, the `source: 'calendar:${string}' | 'article:${string}'` template-literal discriminator encodes origin at the type level. Two names give Plan 04 naming clarity without doubling the Plan 06 type vocabulary.
+- `ScoreBacklogEntry` snapshots the full `NewsArticle` + `MarketSnapshot[]` PM context so LLM retry doesn't depend on live news/PM streams surviving rotation.
+- `scorerVersion` on `ScoredArticle` enables prompt-change re-scoring identification (stability tests can flag rows that need re-scoring rather than blanket re-scoring).
+- `_hint` underscore-prefixed key in FDA/OPEC JSON seeds as agreed "ignore this, it's documentation" convention (JSON has no comment syntax).
+
+**Verification**: All 6 config files parse, version=1 each; `pnpm tsc --noEmit` exits 0; types module is 258 lines with 12 exports covering all 9 named contracts the plan listed (ScoredArticle, CatalystFlag, CalendarEvent alias, TickerDaySummary, ThemeCandidate, PmMapping, PmMappingProposal, DigestPayload, ScoreBacklogEntry) plus CatalystType / CatalystDirection unions and ExtractedCatalyst inline interface. `apis.fred?: z.string().optional()` at line 25 of secure-config.ts.
+
+**Carry-over for Wave 2 (10-03 / 10-04 / 10-05)**:
+- All three Wave 2 plans import from `src/market-intelligence/signal/types.ts` ONLY. If an executor finds a needed type missing or wrong-shaped, that's a structural break — escalate as Rule 4 (architectural) not patch downstream.
+- Operator deferred work (not blocking Wave 2 dev, blocking Wave 2 production-fill): quarterly PDUFA refresh into `config/fda-pdufa-seed.json`, annual OPEC schedule refresh into `config/opec-schedule-seed.json`, FRED API key added to encrypted config when 10-04 needs it.
+- Full Wave 2 dependency map in `.planning/phases/10-llm-trade-signal/10-01-SUMMARY.md` (which types each Wave 2 plan reads and writes).
 
 ### 2026-05-30: Plan 07-06 — M2-01 RECOMMENDATION.md Produced; Both Strategies DISCARD; M2-05 Scope Grows
 
@@ -287,4 +308,4 @@
 
 ---
 
-*Last updated: 2026-05-30 — Plan 07-06 complete; **M2-01 phase ✅ COMPLETE** (6/6 plans, 100% success rate end-to-end). RECOMMENDATION.md produced — both MomentumStrategy + MeanReversionStrategy formally DISCARD'd against CONTEXT.md pass/fail bar (momentum: 0/35 KEEP, bear Sharpe -0.70 invariant; mean-rev: 1/35 KEEP — LLY sample noise, bear Sharpe -0.35, high-vol |MaxDD| 32.8%). M2-05 scope grows: design fresh signals (catalyst-driven, vol-breakout, sector-rotation) before AI layering. Engine finding: MomentumStrategy.shortMA exposed-but-ignored. Next: M2-04 discussion with this verdict context (LLM is M2-05's primary signal, not overlay).*
+*Last updated: 2026-05-31 — Plan 10-01 complete; M2-04 LLM Trade-Signal Layer foundation landed (6 config seeds + shared types module + FRED Zod diff). `pnpm tsc --noEmit` clean. Wave 2 plans (10-03/04/05) unblocked — they all import from `src/market-intelligence/signal/types.ts` only, no cross-imports. Next: 10-02 (LLM client, Wave 1 sibling), then Wave 2 fan-out.*
