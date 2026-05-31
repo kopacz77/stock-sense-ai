@@ -5,10 +5,10 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | Between M2-03 (complete) and M2-04 (next) |
-| Status | M2-03 complete; M2-04 scope discussion next |
+| Current Phase | M2-01 Strategy Reality Check (in progress, parallel track) + M2-03 done + M2-04 next |
+| Status | 07-02 refactor complete; StrategyAdapter now reusable outside CLI for Plan 05 runner |
 | Last Pivot | 2026-05-23 |
-| Last Updated | 2026-05-28 |
+| Last Updated | 2026-05-30 |
 
 ---
 
@@ -75,6 +75,7 @@
 | 2026-05-28 | M2-03 commit be4107c | Follow-up: macro RSS news source (CNBC/Google/MarketWatch), Polymarket volume-desc sort fix, CLI/scheduler pipeline consolidation. Pipeline started firing real Iran-peace + BTC-divergence alerts. |
 | 2026-05-28 | M2-03 commit 0aff0e5 | Scheduler fix: replaced node-cron with sleep-resilient setInterval heartbeat (WSL2 host-sleep was silently dropping `*/15` cron fires during market hours). |
 | 2026-05-28 | **Phase M2-03 COMPLETE** | Acceptance: 7 Telegram alerts validated in production (Iran peace ÷ oil-strike confirm, BTC threshold divergences). Known limitation: PM markets are macro-only — translation layer to single-ticker actions is the M2-04 gap. |
+| 2026-05-30 | Plan 07-02 | Extracted StrategyAdapter + createStrategyFactory from CLI into reusable `src/backtesting/strategies/strategy-adapter.ts` (commits 920c0dc, 0b5370e). Pure refactor — Plan 05 runner can now construct strategies without depending on `src/cli/`. |
 
 ---
 
@@ -92,6 +93,17 @@
 ---
 
 ## Decisions
+
+### 2026-05-30: Plan 07-02 — StrategyAdapter Extracted to Reusable Module
+
+**Decision**: Move `StrategyAdapter` class and `createStrategyFactory` function out of `src/cli/backtest-commands.ts` into new `src/backtesting/strategies/strategy-adapter.ts`. Bypass `strategy-registry.ts` rather than fix its broken momentum `defaultParams` keys.
+
+**Rationale**:
+- M2-01 reality-check runner (Plan 05) must instantiate `MomentumStrategy`/`MeanReversionStrategy` and adapt them to `BacktestStrategy`. Importing from a CLI command file creates an awkward upward dependency from a script to the CLI layer.
+- `strategy-registry.ts`'s defaultParams use wrong keys for momentum (`emaPeriod`, `rsiPeriod` instead of `shortMA`, `longMA`) — fixing the registry is research pitfall #2 and is explicitly out of scope for this plan.
+- Pure refactor: no behavior change, all existing CLI semantics preserved.
+
+**Verification**: Build clean, smoke test confirms exports work, both `backtest run` and `backtest compare` CLI commands load and execute the action handler (only data-fetch errors remain, which are pre-existing infrastructure issues unrelated to this refactor).
 
 ### 2026-05-28: M2-03 Closed — Pipeline Validated, Translation Gap Surfaced
 
@@ -163,4 +175,4 @@
 
 ---
 
-*Last updated: 2026-05-28 — M2-03 closed; entering M2-04 discussion*
+*Last updated: 2026-05-30 — Plan 07-02 complete (StrategyAdapter extracted to reusable module); M2-04 discussion still pending*
