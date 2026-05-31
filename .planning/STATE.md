@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-04 LLM Trade-Signal Layer (in progress — 10-01 ✅; 10-02 ✅; 10-04 ✅; 10-03/05/06/07 pending) |
-| Status | M2-04 Wave 1+2 progress: ArticleScorer + ScoreBacklog (Plan 10-02) landed with 26/26 unit tests green — LM Studio call surface mirrors LlmCorrelator byte-for-byte (sequential gate empirically proven; concurrency>1 clamped to 1; on-failure throws so caller queues to backlog; bail-on-first-failure drain semantics). PmMappingEngine (Plan 10-04) landed earlier with 8/8 tests green. Plan 10-05 RollupBuilder unblocked on both PM-contribution and scored-article sides. |
+| Current Phase | M2-04 LLM Trade-Signal Layer (in progress — 10-01 ✅; 10-02 ✅; 10-03 ✅; 10-04 ✅; 10-05/06/07 pending) |
+| Status | M2-04 Wave 1+2 COMPLETE: ArticleScorer + ScoreBacklog (10-02, 26/26 tests), CalendarFetchers (10-03, 11/11 tests), PmMappingEngine (10-04, 8/8 tests) — 45/45 signal-module tests green. Plan 10-03 end-to-end smoke: 17 events written to catalyst-flags JSONL in 523ms (6 finnhub-earnings + 2 treasury + 9 eia-cron); FRED degraded gracefully (no key). Plan 10-05 RollupBuilder fully unblocked on all three dependencies (scored articles, calendar events, PM contributions). |
 | Last Pivot | 2026-05-23 |
 | Last Updated | 2026-05-31 |
 
@@ -41,14 +41,13 @@
 
 ## Active Work
 
-**Current Focus**: M2-04 LLM Trade-Signal Layer in progress. Wave 1 plan 10-01 ✅. Plan 10-02 (ArticleScorer + ScoreBacklog) ✅. Plan 10-04 (PmMappingEngine) ✅. Plan 10-03 (CalendarFetchers) appears to be in flight (untracked working dir `src/market-intelligence/signal/calendar/` and `.planning/phases/10-llm-trade-signal/10-03-treasury-spike.md` indicating an in-flight executor agent).
+**Current Focus**: M2-04 LLM Trade-Signal Layer Wave 1+2 COMPLETE (10-01, 10-02, 10-03, 10-04 all landed with 45/45 signal-module tests green). Next: Wave 3 fan-out (10-05 RollupBuilder, 10-06 DigestBuilder, 10-07 review CLI).
 
 **Blocking Issues**: None.
 
 **Next Actions**:
-1. Close out Plan 10-03 (CalendarFetchers) — untracked working files in `src/market-intelligence/signal/calendar/` indicate an in-flight executor.
-2. Execute Wave 3 (10-05 RollupBuilder, 10-06 DigestBuilder, 10-07 review CLI) — RollupBuilder is now unblocked on PM contributions (10-04 ✅) AND scored articles (10-02 ✅); only awaiting CalendarFetchers (10-03) for the active-catalyst join.
-3. Operator manual setup (deferred, not blockers): fill `config/fda-pdufa-seed.json` quarterly, `config/opec-schedule-seed.json` annually, add FRED key to encrypted config if calendar fetchers need it.
+1. Execute Wave 3 plans (10-05 RollupBuilder, 10-06 DigestBuilder, 10-07 review CLI) — RollupBuilder is fully unblocked on all three dependencies (scored articles via 10-02, calendar events via 10-03, PM contributions via 10-04).
+2. Operator manual setup (deferred, not blockers): add FRED_API_KEY to `.env` or encrypted config (unlocks 8 macro release feeds in the calendar layer); fill `config/fda-pdufa-seed.json` quarterly from biopharmcatalyst.com; fill `config/opec-schedule-seed.json` annually each December from opec.org; update `EIA_HOLIDAY_SHIFTS` in `src/market-intelligence/signal/calendar/eia-cron-generator.ts` annually each December for the next year's MLK/Presidents/Memorial/July-4 weeks.
 
 **M2-05 scope grows** (carried over from M2-01 verdict): previous assumption was "layer AI on top of MomentumStrategy + MeanReversionStrategy". With both DISCARD'd, M2-05 must design fresh signals first (catalyst-driven entries from M2-04, volatility-breakout, sector-rotation rules). Plan M2-05 phase scoping when M2-04 is closer to done.
 
@@ -85,6 +84,7 @@
 | 2026-05-31 | Plan 10-01 | M2-04 foundation: 6 config JSON seeds in `config/` (themes×24, themes-rejected, macro-tickers×24, pm-market-mappings×3+proposed[], fda-pdufa-seed, opec-schedule-seed), shared types module `src/market-intelligence/signal/types.ts` (258 lines, 12 exports including 9 named contracts ScoredArticle / CatalystFlag / CalendarEvent / TickerDaySummary / ThemeCandidate / PmMapping / PmMappingProposal / DigestPayload / ScoreBacklogEntry), and `apis.fred?` added to ConfigSchema (commits c5a957d, 7c41a06). `pnpm tsc --noEmit` clean. Wave 2 plans (10-03/04/05) unblocked — they all import from this types module only, no cross-imports between Wave 2 modules. |
 | 2026-05-31 | Plan 10-04 | PmMappingEngine landed (commit 65a3144). `src/market-intelligence/signal/pm-mapping-engine.ts` (~230 lines) with `mapMarket()` / `mapMarkets()` / `invalidateCache()` / `mappingCount()`. Match precedence eventSlug → slugPrefix → questionContains, all populated criteria must match, all-null rules refuse to fire. Sign math as single 4-factor product `movePp × dirSign × weight × interpSign` — noPp inversion is a single ±1 flip. EXCLUSION_KEYWORDS bypass runs before mapping (sports/entertainment markets generate neither signals nor proposals). Unmatched markets persist as `PmMappingProposal` shell records with `proposedTickers: []` for the Plan 10-02 article scorer's LLM fallback to enrich. 8 vitest cases all green on first run, covering: Iran ceasefire noPp inversion (-4pp → +4 XLE), BTC slugPrefix, Fed multi-field, unmatched → proposal persist, EXCLUSION_KEYWORDS bypass, all-null refusal, multi-rule stacking, cache + invalidateCache reload. `pnpm tsc --noEmit` clean. Plan 10-05 RollupBuilder unblocked on the PM-contribution side. |
 | 2026-05-31 | Plan 10-02 | ArticleScorer + ScoreBacklog landed (commits 2ed987e, 4c0b2eb). `src/market-intelligence/signal/article-scorer.ts` (~530 lines) mirrors LlmCorrelator's LM Studio call surface byte-for-byte: OpenAI SDK with baseURL override, `apiKey: "lm-studio"` default, `timeout: 60_000`, `maxRetries: 0`, `/no_think` directive, `response_format` omitted (LM Studio rejects `"json_object"`). SCORER_VERSION="v1" + SYSTEM_PROMPT_V1 frozen. Sequential gate via `this.inFlight` promise chain — empirically proven serialized via maxConcurrent counter test (3 parallel calls without await between → maxConcurrent stays at 1). `concurrency > 1` clamped to 1 with console.warn (single-GPU saturation). On LLM failure throws — caller queues to backlog (no rule-based fallback substitution). `parseScorerResponse` tolerant of bare JSON, ```json fenced```, and leading-prose+JSON; clamps sentiment to [-1,1], materiality to [0,1], caps themes at 5, drops invalid catalysts. `fanOutScoredArticle` handles per-ticker, affected_tickers ∩ universe, and themed-only ticker="" cases. `src/market-intelligence/signal/score-backlog.ts` (~160 lines) — single-file rolling backlog at `data/intel/score-backlog.jsonl` with atomic temp-file-rename writes, FIFO drain ordering, maxN cap (default 50), bail-on-first-failure semantics. 26 vitest tests (18 article-scorer + 8 score-backlog), all green. Auto-fixed inline (Rule 2): SYSTEM_PROMPT_V1 catalyst-type list expanded from plan's 10 to types.ts's 22 — narrower prompt enum would have caused silent runtime drops of valid LLM-emitted catalysts (cpi/nfp/pce/jolts/ism/opec/etc). Plan 10-05 RollupBuilder now unblocked on the scored-article side. |
+| 2026-05-31 | Plan 10-03 | M2-04 Calendar Layer landed (commits 9afc3e6, 129b31c). 5 fetchers + 1 orchestrator under `src/market-intelligence/signal/calendar/`: FredCalendarFetcher (8 release IDs locked, `Promise.allSettled` per release, graceful no-op when `apis.fred` missing), FinnhubEarningsCalendarFetcher (1 call per window, client-side filter by uppercase symbol, `amc`→16:30 / `bmo`→08:00 ET), TreasuryAuctionCalendarFetcher (live-spike-confirmed `v1/upcoming_auctions?sort=-auction_date`, reopening-aware regex for 10Y/20Y/30Y including `9-Year 10/11-Month` etc.), EiaCalendarGenerator (pure-deterministic Wednesday emitter, operator-maintained `EIA_HOLIDAY_SHIFTS` currently empty), SeedFileCalendarLoader (FDA PDUFA + OPEC seeds, ENOENT→[]). CalendarRefresher composes all 5 via `Promise.allSettled`, dedups by id, appends to `data/intel/catalyst-flags-YYYY-MM-DD.jsonl`. Live curl spike of TreasuryDirect Fiscal Data API documented at `.planning/phases/10-llm-trade-signal/10-03-treasury-spike.md` — confirmed endpoint + reopening-term nuance before code-write. 11 vitest tests (7 EIA + 4 seed loader), all green. End-to-end smoke (10-ticker universe, 60d window, no FRED key): 17 events written in 523ms = 6 finnhub-earnings + 2 treasury + 9 eia-cron. FRED degraded gracefully — warning logged, NOT in `failed[]` because no-key branch returns `[]` cleanly. `pnpm tsc --noEmit` clean. **M2-04 Wave 1+2 COMPLETE — Wave 3 (10-05/06/07) fully unblocked on all dependencies.** |
 
 ---
 
@@ -93,7 +93,7 @@
 | Metric | Current | Target |
 |--------|---------|--------|
 | M1 phases complete | 2/6 | (deferred) |
-| M2 phases complete | 2/7 (M2-04 in progress, 3/7 plans done) | 7/7 |
+| M2 phases complete | 2/7 (M2-04 in progress, 4/7 plans done) | 7/7 |
 | Live broker integrated | No | Yes (M2-02) |
 | News + AI layer | No | Yes (M2-03/04) |
 | Hard risk limits enforced at execution | No | Yes (M2-06) |
@@ -129,6 +129,34 @@
 - On scorer throw: `await backlog.enqueue(article, pmContext, err.message)`. Do NOT silently substitute a rule-based score.
 - AT END of cycle (after fresh-article scoring): `await backlog.drain(scorer, ctx, 50)` — drain LAST per RESEARCH pitfall #5 so backlog doesn't starve fresh signal.
 - Scheduler state should gain `backlogSize` + `backlogOldestAt` for operator visibility.
+
+### 2026-05-31: Plan 10-03 — Calendar Layer (5 Fetchers + Refresher with Live-Spike-Confirmed Treasury Endpoint)
+
+**Decision**: Build the calendar layer as 5 single-purpose fetchers + 1 orchestrator. Fetchers are pure data producers (`fetchUpcoming(days): Promise<CalendarEvent[]>`, no I/O side effects); the orchestrator owns dedup + JSONL persistence. Confirm the TreasuryDirect Fiscal Data endpoint via live curl spike BEFORE writing the Treasury fetcher, documenting the result at `.planning/phases/10-llm-trade-signal/10-03-treasury-spike.md`.
+
+**Rationale**:
+- **Pure fetcher pattern**: each fetcher is trivially testable (no fs cleanup), independently mockable, and the orchestrator centralizes the only side effects (dedup + JSONL append). Future calendar sources slot in by following the same shape.
+- **Live-spike doc**: the RESEARCH.md endpoint URL was *inferred*, not confirmed. Curl-first caught a subtle nuance — default sort returns 2024-vintage `record_date` ascending order; we must pass `sort=-auction_date` to get forward-looking rows. Spike doc records this so the next maintainer doesn't re-discover it as a "data feed is broken" bug.
+- **Reopening-aware regex** (vs exact-match security_term): the naive `IN ("10-Year","20-Year","30-Year")` filter misses ~half of upcoming long-duration auctions because Treasury reopenings shift the term string to "9-Year 10-Month" / "29-Year 11-Month" / etc. Three regexes (`NOTE_10Y`, `BOND_20Y`, `BOND_30Y`) capture both forms.
+- **Bills excluded**: 4W/8W/13W/52W Bills appear in upcoming_auctions but front-of-curve tail dynamics don't materially move TLT/IEF; filter via `security_type IN ("Note","Bond")`.
+- **FRED `Promise.allSettled` per release**: one release-id failing (rate-limit, transient 5xx) contributes 0 events but the other 7 still land in the cycle. Avoids the cascading-failure mode where one slow release tanks the whole macro stream.
+- **Graceful missing-key degradation**: `apis.fred` is optional per the Wave 1 Zod schema. FredCalendarFetcher logs a single warning + returns `[]` when the key is absent rather than throwing. CalendarRefresher's `failed[]` array captures hard exceptions only — a clean no-op is not a failure. Operator can run the pipeline with or without FRED configured.
+- **EIA generator is pure deterministic** (no network) because EIA publishes the annual petroleum schedule as a static HTML page, not a structured feed. Operator-maintained `EIA_HOLIDAY_SHIFTS` table starts empty (default Wednesday cadence correct for ~90% of weeks); needs ~5 annual entries each December for MLK/Presidents/Memorial/July-4 weeks when Tuesday is the federal holiday.
+- **Earnings hour mapping** conservative: Finnhub's `amc` → 16:30 ET (after-close conservative late mark), `bmo` → 08:00 ET (pre-open conservative late mark), `dmh` → undefined (during-market-hours is rare, exact slot not given).
+- **Seed loader ticker uppercase normalization**: operator can write 'lly' or 'LLY' in `fda-pdufa-seed.json` and the composite id is canonical either way.
+- **Append-only JSONL + read-time dedup**: each `refreshAll()` call appends N events to the daily JSONL. Same id will appear multiple times across N refreshes; rollup builder (Plan 10-05) and digest builder (Plan 10-06) dedup by `id` and take the latest `firstSeenAt`/`lastRefinedAt`. Matches the existing `JsonlStore` pattern; avoids needing rewrite semantics in the storage layer.
+
+**Verification**: 11/11 vitest tests green (7 EIA generator + 4 seed loader); `pnpm tsc --noEmit` clean. End-to-end smoke with no FRED key + 10-ticker universe + 60-day window: 17 CalendarEvents written to JSONL in 523ms (6 finnhub-earnings + 2 treasury + 9 eia-cron). FRED degraded gracefully — warning logged, `failed: []` because no-key branch returns `[]` cleanly. Live API confirmation for both networked fetchers: Finnhub returned upcoming earnings for AMZN/AAPL/MSFT/NVDA/GOOGL/META; Treasury returned 2 long-duration auctions (Bond 29Y-11M reopening 2026-06-11, Note 9Y-11M reopening 2026-06-10). EIA emitted 9 Wednesdays in the 60-day window starting Sunday 2026-05-31 (matches napkin math 60/7=8.57).
+
+**Carry-over for Wave 3 (10-05/06/07)**:
+- `CalendarRefresher.refreshAll(60)` runs once per cycle (recommended cadence: pre-market 06:00 ET daily) and writes the unified stream.
+- Wave 3 modules read `data/intel/catalyst-flags-YYYY-MM-DD.jsonl` and dedup-by-id at read time (taking latest `firstSeenAt`/`lastRefinedAt`).
+- Cycle-runner integration is a one-liner: `await new CalendarRefresher({ fredApiKey: cfg.apis.fred, finnhubApiKey: cfg.apis.finnhub, tickerUniverse: union(watchlist, macroTickers) }).refreshAll(60)`.
+
+**Operator-pending items** (deferred, not blockers for Wave 3 dev — only affect breadth of catalyst flags at runtime):
+- Add `FRED_API_KEY` to `.env` or encrypted config (unlocks 8 macro release feeds: FOMC/CPI/NFP/PCE/Retail/JOLTS/ISM/GDP). Free 32-char key at <https://fred.stlouisfed.org/docs/api/api_key.html>.
+- Quarterly: refresh `config/fda-pdufa-seed.json` from biopharmcatalyst.com PDUFA calendar.
+- Annually (December): refresh `config/opec-schedule-seed.json` from opec.org press calendar; refresh `EIA_HOLIDAY_SHIFTS` map in `eia-cron-generator.ts` for the next year's MLK/Presidents/Memorial/July-4 weeks.
 
 ### 2026-05-31: Plan 10-04 — PmMappingEngine (Table-Driven PM-to-Ticker Signals with noPp Inversion)
 
@@ -357,4 +385,4 @@
 
 ---
 
-*Last updated: 2026-05-31 — Plan 10-02 complete; ArticleScorer + ScoreBacklog landed (commits 2ed987e, 4c0b2eb) with 26/26 unit tests green. LM Studio call surface mirrors LlmCorrelator byte-for-byte (sequential gate empirically proven via maxConcurrent=1 across 3 parallel calls; bail-on-first-failure drain proven via 1-success-then-throw → only 2 calls made). `pnpm tsc --noEmit` clean. Plan 10-05 RollupBuilder unblocked on both PM-contribution (10-04) and scored-article (10-02) sides. Plan 10-03 (CalendarFetchers) still in flight — untracked working dir `src/market-intelligence/signal/calendar/` indicates an in-flight executor.*
+*Last updated: 2026-05-31 — Plan 10-03 complete; M2-04 Calendar Layer landed (commits 9afc3e6, 129b31c) with 11/11 unit tests green. 5 fetchers (FRED 8-release, Finnhub earnings, Treasury 10-30Y, EIA Wednesday-cron, FDA+OPEC seed loader) unified under CalendarRefresher; live curl spike of TreasuryDirect endpoint documented at `.planning/phases/10-llm-trade-signal/10-03-treasury-spike.md` before code-write. End-to-end smoke (10-ticker universe, 60d, no FRED key): 17 events written to catalyst-flags JSONL in 523ms = 6 finnhub-earnings + 2 treasury + 9 eia-cron; FRED degraded gracefully. `pnpm tsc --noEmit` clean. **M2-04 Wave 1+2 COMPLETE (10-01/02/03/04 all landed, 45/45 signal-module tests green) — Wave 3 (10-05 RollupBuilder, 10-06 DigestBuilder, 10-07 review CLI) fully unblocked on all dependencies.***
