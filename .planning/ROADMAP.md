@@ -77,15 +77,17 @@ M2-07: Live Execution + Tax Tracking
 4. Segment results by regime
 5. Write recommendation doc
 
-**Plans:** 6 plans in 4 waves
-- [ ] 07-01-PLAN.md — Yahoo Finance date-range fallback wired into MarketDataService (Wave 1)
-- [ ] 07-02-PLAN.md — Extract StrategyAdapter + createStrategyFactory into reusable module (Wave 1)
-- [ ] 07-03-PLAN.md — Prefetch 35-ticker × 8-year universe into cache + quality report (Wave 2, depends on 07-01)
-- [ ] 07-04-PLAN.md — Regime segmenter module with per-sub-window daily-return logic + unit tests (Wave 2)
-- [ ] 07-05-PLAN.md — Reality-check runner: ~1,050 backtests → results.jsonl (Wave 3, depends on 07-02/03/04)
-- [ ] 07-06-PLAN.md — Recommendation builder: results.jsonl → RECOMMENDATION.md with KEEP/MODIFY/DISCARD verdicts (Wave 4, depends on 07-05)
+**Status:** ✅ COMPLETE (2026-05-31). Both `MomentumStrategy` and `MeanReversionStrategy` formally DISCARDED with evidence. See `.planning/phases/07-strategy-reality-check/RECOMMENDATION.md`. Bonus finding: `MomentumStrategy.shortMA` is not consumed by the indicator computation (config field is dead) — flagged for M2-05 design.
 
-**Estimated effort**: 1-2 days (mostly running existing backtester, some scripting + analysis)
+**Plans:** 6 plans in 4 waves (all complete)
+- [x] 07-01-PLAN.md — Yahoo Finance date-range fallback wired into MarketDataService (Wave 1)
+- [x] 07-02-PLAN.md — Extract StrategyAdapter + createStrategyFactory into reusable module (Wave 1)
+- [x] 07-03-PLAN.md — Prefetch 35-ticker × 8-year universe into cache + quality report (Wave 2)
+- [x] 07-04-PLAN.md — Regime segmenter module with per-sub-window daily-return logic + 12 unit tests (Wave 1)
+- [x] 07-05-PLAN.md — Reality-check runner: 1,050 backtests → results.jsonl (Wave 3)
+- [x] 07-06-PLAN.md — Recommendation builder: results.jsonl → RECOMMENDATION.md with KEEP/MODIFY/DISCARD verdicts (Wave 4)
+
+**Actual effort**: ~1 hour wall-clock (research → plan → 4 waves → verify), of which 35 min was the runner's 1,050-backtest sweep.
 
 ---
 

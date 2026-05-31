@@ -37,7 +37,7 @@
 ## Milestone 2 — AI-Augmented Swing Trading (Active)
 
 ### Strategy Validation
-- [ ] **INCOME-01**: Active strategy validated with positive expectancy across 2018-2025 (including bear periods) after realistic costs — or formally rejected with evidence
+- [x] **INCOME-01**: ✅ Resolved 2026-05-31 — *both* `MomentumStrategy` and `MeanReversionStrategy` formally rejected with evidence (DISCARD). Implication: M2-05 must design fresh signals from M2-04 catalyst data rather than layer AI on existing technicals.
 
 ### Broker Execution
 - [ ] **EXEC-01**: Alpaca paper-trading integration via real broker API
@@ -105,7 +105,7 @@
 | TEST-02 | M1 | Phase 6 | — | deferred |
 | TEST-03 | M1 | Phase 6 | — | deferred |
 | TEST-04 | M1 | Phase 6 | — | deferred |
-| INCOME-01 | M2 | M2-01 | — | pending |
+| INCOME-01 | M2 | M2-01 | 07-01..06 | Complete (DISCARD, both strategies — formally rejected with evidence per RECOMMENDATION.md) |
 | EXEC-01 | M2 | M2-02 | — | pending |
 | EXEC-02 | M2 | M2-07 | — | pending |
 | EXEC-03 | M2 | M2-02 | — | pending |
