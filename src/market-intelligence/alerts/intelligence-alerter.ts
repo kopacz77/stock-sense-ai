@@ -228,13 +228,16 @@ export class IntelligenceAlerter {
     return [
       `*Headline:* ${this.escape(a.article.headline)}`,
       `_${this.escape(a.article.publisher ?? a.article.source)} • ${this.shortTime(a.article.publishedAt)}_`,
-      `*Tickers:* ${tickerStr}`,
+      `*Tickers* (stocks this story affects): ${tickerStr}`,
       "",
-      `*Polymarket:* ${this.escape(a.market.question)}`,
-      `*Yes price:* ${yesPct} (${pct} in window)`,
-      `*24h vol:* $${this.compactNumber(a.market.volume24hr)}`,
+      `*Polymarket question:* ${this.escape(a.market.question)}`,
+      `*Yes price* (the market's odds this happens): ${yesPct} — moved ${pct} in window`,
+      `_pp = percentage points; -4 pp means the odds dropped by 4 (e.g. from 35% to 31%)_`,
+      `*24h vol* (money traded on this market in 24h — bigger = stronger conviction): $${this.compactNumber(a.market.volume24hr)}`,
       "",
       `*Why this matters:* ${this.escape(a.rationale)}`,
+      "",
+      `🟢 _CONFIRMED — news and prediction market moved in the same direction. Corroborated signal._`,
       "",
       `[Article](${a.article.url}) • [Market](https://polymarket.com/market/${a.market.slug})`,
     ].join("\n");
@@ -249,11 +252,14 @@ export class IntelligenceAlerter {
     const pct = `${a.pmMovePp >= 0 ? "+" : ""}${a.pmMovePp.toFixed(1)} pp`;
     const yesPct = `${(a.market.yesPrice * 100).toFixed(0)}%`;
     return [
-      `*Polymarket:* ${this.escape(a.market.question)}`,
-      `*Yes price:* ${yesPct} (${pct} in ${a.windowDescription})`,
-      `*24h vol:* $${this.compactNumber(a.market.volume24hr)}`,
+      `*Polymarket question:* ${this.escape(a.market.question)}`,
+      `*Yes price* (the market's odds this happens): ${yesPct} — moved ${pct} in ${a.windowDescription}`,
+      `_pp = percentage points; -4 pp means the odds dropped by 4 (e.g. from 35% to 31%)_`,
+      `*24h vol* (money traded on this market in 24h — bigger = stronger conviction): $${this.compactNumber(a.market.volume24hr)}`,
       "",
       `*Why this matters:* ${this.escape(a.rationale)}`,
+      "",
+      `🔵 _DIVERGENCE — prediction market moved but no matching news yet. Often smart money positioning ahead of the headlines (so worth a closer look)._`,
       "",
       `[Market](https://polymarket.com/market/${a.market.slug})`,
     ].join("\n");
