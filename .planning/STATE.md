@@ -5,10 +5,10 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-01 Strategy Reality Check (in progress, parallel track) + M2-03 done + M2-04 next |
-| Status | 07-02 refactor complete; StrategyAdapter now reusable outside CLI for Plan 05 runner |
+| Current Phase | M2-01 Strategy Reality Check (Plans 07-01 + 07-02 complete; 07-03/04/05/06 pending) + M2-03 done + M2-04 next |
+| Status | 07-01 Yahoo unlimited fallback wired into MarketDataService; M2-01 universe prefetch now unblocked from Alpha Vantage 25-req/day quota |
 | Last Pivot | 2026-05-23 |
-| Last Updated | 2026-05-30 |
+| Last Updated | 2026-05-31 |
 
 ---
 
@@ -76,6 +76,7 @@
 | 2026-05-28 | M2-03 commit 0aff0e5 | Scheduler fix: replaced node-cron with sleep-resilient setInterval heartbeat (WSL2 host-sleep was silently dropping `*/15` cron fires during market hours). |
 | 2026-05-28 | **Phase M2-03 COMPLETE** | Acceptance: 7 Telegram alerts validated in production (Iran peace ÷ oil-strike confirm, BTC threshold divergences). Known limitation: PM markets are macro-only — translation layer to single-ticker actions is the M2-04 gap. |
 | 2026-05-30 | Plan 07-02 | Extracted StrategyAdapter + createStrategyFactory from CLI into reusable `src/backtesting/strategies/strategy-adapter.ts` (commits 920c0dc, 0b5370e). Pure refactor — Plan 05 runner can now construct strategies without depending on `src/cli/`. |
+| 2026-05-31 | Plan 07-01 | Added `YahooFinanceProvider.fetchHistoricalDataRange(symbol, from, to)` (commit 84d4a55) and wired Yahoo as the third fallback in `MarketDataService.fetchHistoricalData` with cache write-through (commit 81a1d19). M2-01 universe prefetch (35 tickers × 8 years) now fits in one batch run instead of multi-day slicing around the Alpha Vantage 25-req/day quota. |
 
 ---
 
@@ -93,6 +94,19 @@
 ---
 
 ## Decisions
+
+### 2026-05-31: Plan 07-01 — Yahoo Finance as Unlimited Fallback in fetchHistoricalData
+
+**Decision**: Add `YahooFinanceProvider.fetchHistoricalDataRange(symbol, from, to)` and wire it as the third fallback in `MarketDataService.fetchHistoricalData` (after Alpha Vantage and Finnhub), with cache write-through. Keep the legacy `fetchHistoricalData(symbol, days)` method untouched for backwards compatibility.
+
+**Rationale**:
+- M2-01 Plan 03 (universe prefetch) needs 35 tickers × 8 years of daily bars. Alpha Vantage's free-tier 25 req/day quota would stretch that to ≥2 calendar days. Finnhub's `/stock/candle` for US equities is widely reported as premium-only. Yahoo's chart endpoint is free, undocumented but functional, and accepts arbitrary `period1/period2` windows in a single call per symbol.
+- The pre-existing Yahoo provider only exposed a days-based `fetchHistoricalData(symbol, days)` method (legacy path used by `getHistoricalData`'s "ultimate fallback"). Range-based fetching for backtest data needed a new method, not a signature change.
+- Wrapped the Finnhub block in try/catch (previously rethrew) so any Finnhub failure falls through to Yahoo instead of bubbling up — necessary for the chain to function as intended (auto-fixed per Rule 3).
+
+**Verification**: Direct provider call returns 21 SPY bars for Jan 2018 (2018-01-02..2018-01-31). MarketDataService end-to-end test with AV+Finnhub nulled writes a `provider='yahoo'` cache entry with `dataPoints=21`.
+
+**Carry-over**: Pre-existing Commander double-registration bug in `src/index.ts` (lines 1030-1031: both `registerBacktestCommands` and `registerBacktestDataCommands` call `program.command('backtest')`, second wins) means the `backtest data download/list/import/clear` CLI subcommands are unreachable. If 07-03 wants to invoke `data download` as a CLI step, this needs fixing first. Otherwise, calling `MarketDataService` directly from a prefetch script works.
 
 ### 2026-05-30: Plan 07-02 — StrategyAdapter Extracted to Reusable Module
 
@@ -175,4 +189,4 @@
 
 ---
 
-*Last updated: 2026-05-30 — Plan 07-02 complete (StrategyAdapter extracted to reusable module); M2-04 discussion still pending*
+*Last updated: 2026-05-31 — Plan 07-01 complete (Yahoo unlimited fallback wired into MarketDataService); 07-03 universe prefetch now unblocked from AV quota; M2-04 discussion still pending*
