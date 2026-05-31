@@ -51,13 +51,64 @@ export class YahooFinanceProvider {
       },
     });
 
-    const result = response.data?.chart?.result?.[0];
+    return this.parseChartResponse(symbol, response.data?.chart?.result?.[0]);
+  }
+
+  /**
+   * Fetch historical daily bars for an arbitrary date range.
+   * Use this for backtest data fetching (e.g. 8 years of bars for the M2-01 universe).
+   * The legacy `fetchHistoricalData(symbol, days)` is kept for compatibility with the
+   * existing analyzer / quote-derivation paths.
+   */
+  async fetchHistoricalDataRange(
+    symbol: string,
+    from: Date,
+    to: Date
+  ): Promise<HistoricalData[]> {
+    const period1 = Math.floor(from.getTime() / 1000);
+    const period2 = Math.floor(to.getTime() / 1000);
+
+    const response = await axios.get(`${this.baseUrl}/${symbol.toUpperCase()}`, {
+      params: {
+        period1,
+        period2,
+        interval: '1d',
+        events: 'history',
+      },
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    });
+
+    return this.parseChartResponse(symbol, response.data?.chart?.result?.[0]);
+  }
+
+  /**
+   * Parse the Yahoo chart endpoint response into HistoricalData[] sorted newest-first.
+   * Shared by both the days-based and date-range fetch paths.
+   */
+  private parseChartResponse(
+    symbol: string,
+    result: unknown
+  ): HistoricalData[] {
     if (!result) {
       throw new Error(`No data found for symbol: ${symbol}`);
     }
 
-    const timestamps = result.timestamp || [];
-    const quote = result.indicators?.quote?.[0];
+    const r = result as {
+      timestamp?: number[];
+      indicators?: { quote?: Array<{
+        open: Array<number | null>;
+        high: Array<number | null>;
+        low: Array<number | null>;
+        close: Array<number | null>;
+        volume: Array<number | null>;
+      }> };
+    };
+
+    const timestamps = r.timestamp ?? [];
+    const quote = r.indicators?.quote?.[0];
 
     if (!quote || timestamps.length === 0) {
       throw new Error(`Invalid response from Yahoo Finance for symbol: ${symbol}`);
@@ -77,14 +128,16 @@ export class YahooFinanceProvider {
         continue;
       }
 
-      const date = new Date(timestamps[i] * 1000);
+      const ts = timestamps[i];
+      if (ts == null) continue;
+      const date = new Date(ts * 1000);
       historicalData.push({
         date: date.toISOString().split('T')[0] ?? '',
-        open: quote.open[i],
-        high: quote.high[i],
-        low: quote.low[i],
-        close: quote.close[i],
-        volume: quote.volume[i],
+        open: quote.open[i] as number,
+        high: quote.high[i] as number,
+        low: quote.low[i] as number,
+        close: quote.close[i] as number,
+        volume: quote.volume[i] as number,
       });
     }
 
