@@ -73,8 +73,28 @@ export class SimpleBacktestEngine {
       priceMap.set(bar.symbol, bar.close);
       this.portfolio.updatePositionPrices(priceMap, bar.timestamp);
 
-      // Generate signal from strategy
-      const signal = this.strategy.onBar ? await this.strategy.onBar(bar.symbol, bar, [bar]) : null;
+      // Generate signal from strategy.
+      // Pass the full history-to-date (inclusive of the current bar) so
+      // indicator-based strategies have enough lookback to compute SMAs,
+      // RSI, etc. Previously this passed only `[bar]`, which caused every
+      // indicator-based strategy (MomentumStrategy, MeanReversionStrategy)
+      // to throw "Insufficient historical data for analysis (minimum N
+      // periods required)" on every single bar — net effect was zero trades
+      // for the entire backtest. Fixed for M2-01 Plan 05.
+      //
+      // Wrap in try/catch so that strategies which throw during their
+      // warm-up window (e.g., MomentumStrategy throws while historicalData
+      // length < longMA) don't terminate the entire backtest — those bars
+      // just produce no signal, identical to onBar returning null.
+      const historySoFar = filteredBars.slice(0, i + 1);
+      let signal: Awaited<ReturnType<NonNullable<typeof this.strategy.onBar>>> = null;
+      if (this.strategy.onBar) {
+        try {
+          signal = await this.strategy.onBar(bar.symbol, bar, historySoFar);
+        } catch {
+          signal = null;
+        }
+      }
 
       // Process signal if generated
       if (signal && signal.action !== "HOLD") {
