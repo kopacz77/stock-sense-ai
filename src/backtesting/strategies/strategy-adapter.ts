@@ -15,8 +15,26 @@ import type { BacktestStrategy, HistoricalDataPoint } from '../types/backtest-ty
 import type { HistoricalData, Signal } from '../../types/trading.js';
 
 /**
+ * Maximum number of bars to feed to a strategy on each call.
+ *
+ * MomentumStrategy needs at most longMA + ~50-period MACD lookback;
+ * MeanReversionStrategy needs at most ~50-period RSI/MFI/BB lookback.
+ * 300 bars (~1.2 years) is comfortably more than any indicator window
+ * either strategy uses, while keeping per-call work O(300) rather than
+ * O(N) for the full backtest history (8 years × 252 bars ≈ 2010 bars
+ * per ticker — passing the full history made every backtest do
+ * quadratic work over the equity curve).
+ *
+ * Trimming here is sound because the underlying technical-indicators
+ * library reads only the most-recent N values for any rolling window.
+ * Anything older than 300 bars provides no signal information.
+ */
+const STRATEGY_HISTORY_WINDOW = 300;
+
+/**
  * Convert backtest-engine bars (oldest-first chronological) to the
- * HistoricalData[] format the strategies expect — which is NEWEST-FIRST.
+ * HistoricalData[] format the strategies expect — which is NEWEST-FIRST,
+ * trimmed to at most STRATEGY_HISTORY_WINDOW most-recent bars.
  *
  * MomentumStrategy / MeanReversionStrategy both:
  *   - read `historicalData[0].close` as the CURRENT price.
@@ -33,9 +51,13 @@ import type { HistoricalData, Signal } from '../../types/trading.js';
  * chronological, strategy speaks newest-first, adapter translates.
  */
 function toStrategyHistoricalData(bars: HistoricalDataPoint[]): HistoricalData[] {
-  const out: HistoricalData[] = new Array(bars.length);
-  for (let i = 0; i < bars.length; i++) {
-    const point = bars[bars.length - 1 - i]!;
+  // Take only the most recent STRATEGY_HISTORY_WINDOW bars (caps per-call
+  // work; see comment on STRATEGY_HISTORY_WINDOW).
+  const startIdx = Math.max(0, bars.length - STRATEGY_HISTORY_WINDOW);
+  const slice = bars.length > STRATEGY_HISTORY_WINDOW ? bars.slice(startIdx) : bars;
+  const out: HistoricalData[] = new Array(slice.length);
+  for (let i = 0; i < slice.length; i++) {
+    const point = slice[slice.length - 1 - i]!;
     out[i] = {
       date: point.timestamp.toISOString().split('T')[0] ?? '',
       open: point.open,
