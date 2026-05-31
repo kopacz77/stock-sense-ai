@@ -234,16 +234,18 @@ M2-07: Live Execution + Tax Tracking
 
 **Depends on M2-03.**
 
-**Plans:** 7 plans in 4 waves
-- [ ] 10-01-PLAN.md — Config seed files (themes, macro tickers, PM mappings, FDA/OPEC seeds) + signal/types.ts + Zod fred-key extension (Wave 1)
-- [ ] 10-02-PLAN.md — ArticleScorer module (LM Studio call surface mirrored from LlmCorrelator) + ScoreBacklog persistent queue (Wave 2)
-- [ ] 10-03-PLAN.md — Calendar fetchers: FRED + Finnhub earnings + Treasury auctions + EIA cron + seed loader + CalendarRefresher orchestrator (Wave 2)
-- [ ] 10-04-PLAN.md — PmMappingEngine (hybrid table + proposal persistence + exclusion-keyword filter) (Wave 2)
-- [ ] 10-05-PLAN.md — RollupBuilder + CatalystRefiner + cycle-runner integration (scoring + backlog drain + calendar refresh + rollup build) (Wave 3)
-- [ ] 10-06-PLAN.md — DigestBuilder + scheduled-digest delivery model (3 digests + break-glass) + alerter extension (Wave 4)
-- [ ] 10-07-PLAN.md — CLI subcommands (themes review, pm-mappings review, calendar refresh/list, rollup today, stability-test, scorer ping) (Wave 4)
+**Status:** ✅ COMPLETE (2026-05-31). Goal verified 6/6 success criteria. Iran worked-example fixture passes end-to-end: scored article (sentiment=-0.7, materiality=0.85, XLE) + Iran ceasefire PM signal (-4pp, noPp inversion) + OPEC catalyst → XLE rollup with weightedSentiment≈-0.7, pmContribution.netScore=+4, activeCatalystIds=["opec-2026-06-01"]. **103/103 market-intelligence tests green.**
 
-**Estimated effort**: 8-10 focused hours assuming Wave 2 plans (02, 03, 04) execute in parallel.
+**Plans:** 7 plans in 4 waves (all complete)
+- [x] 10-01-PLAN.md — Config seed files (themes, macro tickers, PM mappings, FDA/OPEC seeds) + signal/types.ts + Zod fred-key extension (Wave 1)
+- [x] 10-02-PLAN.md — ArticleScorer module + ScoreBacklog persistent queue (Wave 2)
+- [x] 10-03-PLAN.md — 5 calendar fetchers (FRED + Finnhub + Treasury + EIA + seed loader) + CalendarRefresher orchestrator (Wave 2)
+- [x] 10-04-PLAN.md — PmMappingEngine with noPp inversion + exclusion-keyword filter (Wave 2)
+- [x] 10-05-PLAN.md — RollupBuilder + CatalystRefiner + cycle-runner integration (5 new pipeline steps) (Wave 3)
+- [x] 10-06-PLAN.md — DigestBuilder + scheduled-digest delivery (3 ET digests + break-glass) + alerter extension (Wave 4)
+- [x] 10-07-PLAN.md — 7 CLI subcommands (themes-review, pm-mappings-review, calendar-refresh/list, rollup-today, stability-test, scorer-ping) (Wave 4)
+
+**Actual effort**: ~1.5 hours wall-clock (research → plan → 4 waves → verify), with Wave 2's 3 parallel agents finishing the longest critical path (calendar layer) in 22 min.
 
 ---
 

@@ -56,10 +56,10 @@
 - [ ] **ALERT-02**: LLM-assisted headline-to-market correlation produces alert rationale (≤200 words per alert)
 
 ### AI Analysis
-- [ ] **AI-01**: LLM scores news headlines for sentiment + materiality per ticker
-- [ ] **AI-02**: LLM tags tickers with active themes (AI infra, defense, reshoring, tariff exposure, etc.)
-- [ ] **AI-03**: LLM flags catalysts (earnings, regulatory, M&A) from news/calendar
-- [ ] **AI-04**: LLM API spend tracked and capped daily
+- [x] **AI-01**: ✅ Resolved 2026-05-31 — `ArticleScorer` (local Qwen 3 14B) emits sentiment ∈ [-1,+1] + materiality ∈ [0,1] per (article × ticker); persisted to `data/intel/scored-articles-YYYY-MM-DD.jsonl`; rolled up materiality-weighted into `ticker-day-summary-*.jsonl`
+- [x] **AI-02**: ✅ Resolved 2026-05-31 — LLM-discovered themes injected with canonical enum from `config/themes.json`; `intel themes-review` CLI surfaces candidates ≥5/wk for accept/alias/reject
+- [x] **AI-03**: ✅ Resolved 2026-05-31 — 9-source calendar (FRED 8 releases / Finnhub earnings / Treasury / EIA / FDA / OPEC) emits `CatalystFlag` with type/date/magnitude/direction/confidence; `CatalystRefiner` updates magnitude/direction as scored articles reference events
+- [x] **AI-04**: ✅ Resolved 2026-05-31 — Reframed for local LLM as volume-tracking (soft cap 500 articles/day with watchlist + macro-keyword priority); tail persists unscored but logged; absolute backstop of 8 Telegram sends/day
 
 ### Risk Hardening
 - [ ] **RISK-02**: Pre-trade check blocks orders violating concentration / size limits (ALLOW/BLOCK with reason)
@@ -118,10 +118,10 @@
 | SCHED-01 | M2 | M2-03 | — | pending |
 | ALERT-01 | M2 | M2-03 | — | pending |
 | ALERT-02 | M2 | M2-03 | — | pending |
-| AI-01 | M2 | M2-04 | — | pending |
-| AI-02 | M2 | M2-04 | — | pending |
-| AI-03 | M2 | M2-04 | — | pending |
-| AI-04 | M2 | M2-04 | — | pending |
+| AI-01 | M2 | M2-04 | 10-02, 10-05 | Complete |
+| AI-02 | M2 | M2-04 | 10-02, 10-07 | Complete |
+| AI-03 | M2 | M2-04 | 10-03, 10-05 | Complete |
+| AI-04 | M2 | M2-04 | 10-02, 10-05, 10-06 | Complete (volume cap; local LLM = $0 spend) |
 | RISK-02 | M2 | M2-06 | — | pending |
 | RISK-03 | M2 | M2-06 | — | pending |
 | RISK-04 | M2 | M2-06 | — | pending |
