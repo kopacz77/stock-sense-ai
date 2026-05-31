@@ -52,7 +52,7 @@ M2-07: Live Execution + Tax Tracking
 
 ### Phase M2-01: Strategy Reality Check
 
-**Directory**: `.planning/phases/07-strategy-reality-check/` (to be created)
+**Directory**: `.planning/phases/07-strategy-reality-check/`
 
 **Goal**: Empirically determine whether the existing `MomentumStrategy` and `MeanReversionStrategy` have positive expectancy across 2018-2025 (mix of bull, bear, and high-volatility regimes) on a representative US equity universe, after realistic costs.
 
@@ -76,6 +76,14 @@ M2-07: Live Execution + Tax Tracking
 3. Run mean reversion strategy across full universe with parameter sweep
 4. Segment results by regime
 5. Write recommendation doc
+
+**Plans:** 6 plans in 4 waves
+- [ ] 07-01-PLAN.md — Yahoo Finance date-range fallback wired into MarketDataService (Wave 1)
+- [ ] 07-02-PLAN.md — Extract StrategyAdapter + createStrategyFactory into reusable module (Wave 1)
+- [ ] 07-03-PLAN.md — Prefetch 35-ticker × 8-year universe into cache + quality report (Wave 2, depends on 07-01)
+- [ ] 07-04-PLAN.md — Regime segmenter module with per-sub-window daily-return logic + unit tests (Wave 2)
+- [ ] 07-05-PLAN.md — Reality-check runner: ~1,050 backtests → results.jsonl (Wave 3, depends on 07-02/03/04)
+- [ ] 07-06-PLAN.md — Recommendation builder: results.jsonl → RECOMMENDATION.md with KEEP/MODIFY/DISCARD verdicts (Wave 4, depends on 07-05)
 
 **Estimated effort**: 1-2 days (mostly running existing backtester, some scripting + analysis)
 
@@ -362,4 +370,4 @@ These phases were planned under M1 but are deprioritized until M2 ships. Work re
 
 ---
 
-*Last updated: 2026-05-23 — Milestone 2 pivot*
+*Last updated: 2026-05-30 — M2-01 plans created*
