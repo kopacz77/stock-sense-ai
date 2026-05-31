@@ -2,12 +2,14 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { TelegramService, type TelegramMessage } from "../../notifications/telegram-service.js";
 import { JsonlStore } from "../storage/jsonl-store.js";
+import { digestTitle, renderDigestMarkdown } from "./digest-builder.js";
 import type {
   ConfirmedAlert,
   DigestAlert,
   DivergenceAlert,
   IntelligenceAlert,
 } from "./types.js";
+import type { DigestPayload } from "../signal/types.js";
 
 interface CooldownRecord {
   /** Polymarket market id. */
@@ -210,7 +212,7 @@ export class IntelligenceAlerter {
         return {
           type: "DAILY_DIGEST",
           priority: "LOW",
-          title: alert.flavor === "MORNING" ? "Morning Brief" : "Evening Recap",
+          title: digestTitle(alert.flavor),
           message: alert.body,
         };
     }

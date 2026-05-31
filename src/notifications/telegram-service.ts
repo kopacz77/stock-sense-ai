@@ -131,10 +131,21 @@ export class TelegramService {
         message += `${alert.message ?? ""}\n`;
         break;
 
-      case "DAILY_DIGEST":
-        message += `📋 *${alert.title ?? "Daily Digest"}*\n\n`;
+      case "DAILY_DIGEST": {
+        // Title carries flavor (Plan 10-06): Morning Brief / Mid-Day Update / Pre-Close Recap.
+        // Pick a distinguishing emoji so the operator can visually triage the three slots.
+        const title = alert.title ?? "Daily Digest";
+        const emoji = title.includes("Morning")
+          ? "🌅"
+          : title.includes("Mid-Day")
+            ? "☀️"
+            : title.includes("Pre-Close")
+              ? "🔔"
+              : "📋";
+        message += `${emoji} *${title}*\n\n`;
         message += `${alert.message ?? ""}\n`;
         break;
+      }
 
       default:
         message += `📝 ${alert.message || "Stock analysis update"}\n`;

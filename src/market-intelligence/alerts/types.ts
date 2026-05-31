@@ -1,5 +1,6 @@
 import type { MarketSnapshot } from "../polymarket/types.js";
 import type { NewsArticle } from "../news/types.js";
+import type { DigestPayload } from "../signal/types.js";
 
 export type IntelligenceAlertKind =
   | "HEADLINE_PM_CONFIRMED"
@@ -33,9 +34,15 @@ export interface DivergenceAlert {
 
 export interface DigestAlert {
   kind: "DAILY_DIGEST";
-  flavor: "MORNING" | "EVENING";
+  /**
+   * Digest flavor — corresponds to the three ET scheduled slots (Plan 10-06).
+   * EVENING was used during M2-03; M2-04 replaced it with the MORNING/MIDDAY/CLOSE triple.
+   */
+  flavor: "MORNING" | "MIDDAY" | "CLOSE";
   /** Pre-formatted body (Markdown). */
   body: string;
+  /** Structured payload for re-rendering or audit. Populated by DigestBuilder. */
+  payload?: DigestPayload;
   createdAt: string;
 }
 
