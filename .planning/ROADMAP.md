@@ -199,9 +199,9 @@ M2-07: Live Execution + Tax Tracking
 
 ### Phase M2-04: LLM Trade-Signal Layer
 
-**Directory**: `.planning/phases/10-llm-trade-signal/` (to be created)
+**Directory**: `.planning/phases/10-llm-trade-signal/`
 
-**Goal**: Extend the M2-03 LLM scaffolding into a *trade-decision-grade* analysis layer: per-ticker rolling sentiment, theme tagging against a maintained enum, structured catalyst flags. M2-03 produces "alerts worth your attention"; M2-04 produces "machine-readable signal usable by the strategy engine."
+**Goal**: Extend the M2-03 LLM scaffolding into a *trade-decision-grade* analysis layer: per-article scored sentiment + materiality (local Qwen 3 14B), per-ticker-day rollup (the M2-05 query surface), LLM-discovered theme tags (weekly operator review), scheduled + emerging catalyst flags in a unified shape, PM-macro-to-ticker translations (hybrid table + LLM fallback), a 60-day calendar layer (FOMC / CPI / NFP / PCE / earnings / FDA PDUFA / OPEC / EIA / Treasury auctions), and an upgraded delivery model (3 scheduled digests + 1 break-glass slot replacing the bare 4/day cap).
 
 **Requirements**:
 | REQ-ID | Description |
@@ -209,25 +209,41 @@ M2-07: Live Execution + Tax Tracking
 | AI-01 | LLM scores news headlines for sentiment + materiality per ticker (rolling, persisted) |
 | AI-02 | LLM tags tickers with active themes (AI infra, defense, reshoring, tariff exposure, etc.) |
 | AI-03 | LLM flags catalysts (earnings, regulatory, M&A) from news/calendar with date + magnitude |
-| AI-04 | LLM API spend tracked and capped daily (extends M2-03 cost tracking) |
+| AI-04 | LLM API spend tracked and capped daily (extends M2-03 cost tracking — reframed as call volume since LLM is local/free) |
 
 **Architecture additions on top of M2-03**:
-- Daily batch: aggregate M2-03 headlines per ticker → Claude scores sentiment + materiality → persist rolling per-ticker summary
-- Theme tags: closed enum in config; LLM scores each ticker against enum weekly
-- Catalyst flags: structured output (type / date / magnitude / direction)
-- Prompt-cache static parts (schema, theme enum, watchlist) aggressively
+- Per-article scoring (sequential, sentence-level prompt with canonical-themes + upcoming-calendar context) → ScoredArticle[] (one record per article × ticker)
+- ScoreBacklog absorbs LLM-down windows (drain ≤50/cycle after fresh-article scoring)
+- 60-day calendar layer from FRED + Finnhub earnings + Treasury auctions + EIA Wednesdays cron + manual FDA PDUFA / OPEC seed files
+- Catalyst refinement: scored articles update calendar-event direction / magnitude / confidence
+- PM-to-ticker mapping engine: hybrid table (config/pm-market-mappings.json) + LLM-fallback proposals
+- Per-ticker-day rollup: materiality-weighted sentiment, theme union, active catalyst ids, PM contribution net score — the M2-05 query surface
+- Delivery: 3 scheduled digests (8:30 / 12:30 / 15:30 ET) + 1 break-glass slot (PM ≥15pp OR LLM-criticality ≥0.9 OR imminent high-mag catalyst)
+- Operator UX: CLI commands `intel themes review`, `intel pm-mappings review`, `intel calendar refresh|list`, `intel rollup today`, `intel stability-test --days N`, `intel scorer ping`
+
+**Why M2-04 matters more after M2-01**: with both `MomentumStrategy` and `MeanReversionStrategy` formally DISCARD'd (RECOMMENDATION.md, 2026-05-31), M2-05 will design **fresh** signals from M2-04 data — the rollup is M2-05's primary signal source, not a filter on top of working technicals. The data substrate has to be well-typed, well-tested, and easy to query.
 
 **Success Criteria**:
-1. Daily headline batch processed with sentiment + materiality per article
-2. Per-ticker daily summary (mean sentiment, materiality-weighted) queryable via API
-3. Theme tags refreshed weekly per ticker
-4. Catalyst flags surface 24h+ before scheduled events
-5. Daily LLM spend tracked with breakdown (M2-03 alerts vs. M2-04 batch); single combined cap
-6. Stability test: same 7-day window scored twice, results stable (no LLM drift hallucination)
-
-**Estimated effort**: 3-4 days (smaller than original because M2-03 builds the LLM scaffolding)
+1. Per-article scored sentiment + materiality persisted in `data/intel/scored-articles-YYYY-MM-DD.jsonl` (one record per article × ticker)
+2. Per-ticker-day rollup queryable via `data/intel/ticker-day-summary-YYYY-MM-DD.jsonl` + `intel rollup today --ticker T`
+3. LLM-discovered themes surface for operator review weekly via `intel themes review`; accepted themes persist to `config/themes.json`
+4. 60-day calendar layer (FOMC / CPI / NFP / PCE / earnings / FDA PDUFA / OPEC / EIA / Treasury) refreshed daily with best-effort failure tolerance; surfaces 24h+ before scheduled events
+5. PM-macro-to-ticker translation produces signed weighted contributions into the per-ticker-day rollup (Iran -4pp → +XLE / +USO / -JETS by the noPp inversion rule)
+6. Stability test: `intel stability-test --days 7` PASSES with article P95 sent-delta ≤ 0.15 AND rollup P95 ≤ 0.08
+7. Scheduled-digest delivery model live: 3 daily digests + 1 break-glass slot replace the bare 4/day cap; existing per-(market, kind) cooldown unchanged; audit log preserves suppressed alerts
 
 **Depends on M2-03.**
+
+**Plans:** 7 plans in 4 waves
+- [ ] 10-01-PLAN.md — Config seed files (themes, macro tickers, PM mappings, FDA/OPEC seeds) + signal/types.ts + Zod fred-key extension (Wave 1)
+- [ ] 10-02-PLAN.md — ArticleScorer module (LM Studio call surface mirrored from LlmCorrelator) + ScoreBacklog persistent queue (Wave 2)
+- [ ] 10-03-PLAN.md — Calendar fetchers: FRED + Finnhub earnings + Treasury auctions + EIA cron + seed loader + CalendarRefresher orchestrator (Wave 2)
+- [ ] 10-04-PLAN.md — PmMappingEngine (hybrid table + proposal persistence + exclusion-keyword filter) (Wave 2)
+- [ ] 10-05-PLAN.md — RollupBuilder + CatalystRefiner + cycle-runner integration (scoring + backlog drain + calendar refresh + rollup build) (Wave 3)
+- [ ] 10-06-PLAN.md — DigestBuilder + scheduled-digest delivery model (3 digests + break-glass) + alerter extension (Wave 4)
+- [ ] 10-07-PLAN.md — CLI subcommands (themes review, pm-mappings review, calendar refresh/list, rollup today, stability-test, scorer ping) (Wave 4)
+
+**Estimated effort**: 8-10 focused hours assuming Wave 2 plans (02, 03, 04) execute in parallel.
 
 ---
 
@@ -372,4 +388,4 @@ These phases were planned under M1 but are deprioritized until M2 ships. Work re
 
 ---
 
-*Last updated: 2026-05-30 — M2-01 plans created*
+*Last updated: 2026-05-31 — M2-04 plans created (7 plans, 4 waves)*
