@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-01 Strategy Reality Check (Plans 07-01 + 07-02 complete; 07-03/04/05/06 pending) + M2-03 done + M2-04 next |
-| Status | 07-01 Yahoo unlimited fallback wired into MarketDataService; M2-01 universe prefetch now unblocked from Alpha Vantage 25-req/day quota |
+| Current Phase | M2-01 Strategy Reality Check (Plans 07-01 + 07-02 + 07-04 complete; 07-03/05/06 pending) + M2-03 done + M2-04 next |
+| Status | 07-04 regime-segmenter module + 12 passing tests landed; Plan 05 runner now has its per-regime metrics dependency |
 | Last Pivot | 2026-05-23 |
 | Last Updated | 2026-05-31 |
 
@@ -77,6 +77,7 @@
 | 2026-05-28 | **Phase M2-03 COMPLETE** | Acceptance: 7 Telegram alerts validated in production (Iran peace ÷ oil-strike confirm, BTC threshold divergences). Known limitation: PM markets are macro-only — translation layer to single-ticker actions is the M2-04 gap. |
 | 2026-05-30 | Plan 07-02 | Extracted StrategyAdapter + createStrategyFactory from CLI into reusable `src/backtesting/strategies/strategy-adapter.ts` (commits 920c0dc, 0b5370e). Pure refactor — Plan 05 runner can now construct strategies without depending on `src/cli/`. |
 | 2026-05-31 | Plan 07-01 | Added `YahooFinanceProvider.fetchHistoricalDataRange(symbol, from, to)` (commit 84d4a55) and wired Yahoo as the third fallback in `MarketDataService.fetchHistoricalData` with cache write-through (commit 81a1d19). M2-01 universe prefetch (35 tickers × 8 years) now fits in one batch run instead of multi-day slicing around the Alpha Vantage 25-req/day quota. |
+| 2026-05-31 | Plan 07-04 | Built `regime-segmenter.ts` (commit ff925db) with REGIMES constant + sliceByRegime + metricsByRegime. Per-sub-window daily-return recomputation drops cross-window jump returns (Sharpe stays sane on discontinuous bull = 2019+2020-H2+2023+2024 windows); maxDrawdown selected as worst per-sub-window. 12 vitest unit tests landed (commit ea9c40d), including a "100k→180k cross-window jump" test that demonstrably proves volatility stays <1.0. Plan 05 reality-check runner now has its per-regime metrics dependency. |
 
 ---
 
@@ -94,6 +95,21 @@
 ---
 
 ## Decisions
+
+### 2026-05-31: Plan 07-04 — Regime Segmenter with Per-Sub-Window Return Recomputation
+
+**Decision**: Build `src/backtesting/analytics/regime-segmenter.ts` exposing `REGIMES`, `sliceByRegime`, `metricsByRegime`. Use `PerformanceMetricsCalculator` for baseline trade-statistics and aggregate-return fields, then override Sharpe / Sortino / volatility / maxDrawdown using per-sub-window recomputation. Add 12 vitest unit tests at `src/backtesting/analytics/__tests__/regime-segmenter.test.ts`.
+
+**Rationale**:
+- Naively splicing the 4 bull-regime sub-windows (2019, 2020-H2, 2023, 2024) and feeding the result to `PerformanceMetricsCalculator.calculate()` produces two correctness bugs: (a) the cross-window equity "jump" (e.g., 2019-12-31 equity → 2020-07-01 equity, skipping 6 months of high-vol) becomes a single "daily return" that catastrophically inflates volatility and distorts Sharpe; (b) `maxDrawdown` over the spliced curve reflects the absence-of-data gap, not a sustained decline.
+- Fix (a): recompute daily returns per contiguous sub-window. The inter-window jump return is implicitly dropped because each sub-window starts at index 1 of its own series. Concatenate the resulting per-sub-window returns into a single array for Sharpe/Sortino/volatility.
+- Fix (b): compute drawdown per sub-window via `PerformanceMetricsCalculator.calculateDrawdowns()`, select the worst (most negative).
+- `totalReturn`/`cagr`/`annualizedReturn` left as the calculator computes them — they use first-point equity, last-point equity, and the regime date span, which is a defensible "what did the operator earn during this regime" read.
+- Empty regime returns zero metrics rather than throwing (Plan 05 runner will sweep ~1050 (ticker × strategy × params) combos × 3 regimes; a single sparse-data ticker must not abort the sweep).
+
+**Verification**: 12/12 vitest tests pass; key test "metricsByRegime does NOT include cross-window jump in Sharpe" empirically proves volatility stays <1.0 (decimal terms) even with a 100k→180k inter-window gap that would yield >3.0 under naive splicing.
+
+**Carry-over**: Plan 05 reality-check runner is now unblocked. Plan 06 recommendation generator can read per-regime metrics from the JSONL Plan 05 produces.
 
 ### 2026-05-31: Plan 07-01 — Yahoo Finance as Unlimited Fallback in fetchHistoricalData
 
