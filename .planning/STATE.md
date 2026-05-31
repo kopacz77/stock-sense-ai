@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-01 Strategy Reality Check (Plans 07-01 + 07-02 + 07-04 complete; 07-03/05/06 pending) + M2-03 done + M2-04 next |
-| Status | 07-04 regime-segmenter module + 12 passing tests landed; Plan 05 runner now has its per-regime metrics dependency |
+| Current Phase | M2-01 Strategy Reality Check (Plans 07-01 + 07-02 + 07-03 + 07-04 complete; 07-05/06 pending) + M2-03 done + M2-04 next |
+| Status | 07-03 universe prefetch landed; 35/35 tickers cached 2018-2025 via Yahoo, per-ticker quality report flags 35/35 OK; Plan 05 sweep can run network-free |
 | Last Pivot | 2026-05-23 |
 | Last Updated | 2026-05-31 |
 
@@ -50,7 +50,7 @@
 2. Plan M2-04 (`/gsd:plan-phase`) producing PLAN.md with PM-to-ticker mapping decisions baked in.
 3. Execute M2-04.
 
-**Parallel track (lower priority)**: M2-01 Strategy Reality Check can run anytime since it's mostly automated backtest runs against existing data.
+**Parallel track (lower priority)**: M2-01 Strategy Reality Check — Plans 07-01/02/03/04 complete. Next is 07-05 (reality-check runner; can sweep ~1,050 backtests against the now-prefetched cache with zero network I/O), then 07-06 (RECOMMENDATION.md). 07-03 cache TTL is 24h — re-run `pnpm tsx scripts/m201-prefetch-universe.ts` if more than a day elapses before Plan 05 starts.
 
 ---
 
@@ -78,6 +78,7 @@
 | 2026-05-30 | Plan 07-02 | Extracted StrategyAdapter + createStrategyFactory from CLI into reusable `src/backtesting/strategies/strategy-adapter.ts` (commits 920c0dc, 0b5370e). Pure refactor — Plan 05 runner can now construct strategies without depending on `src/cli/`. |
 | 2026-05-31 | Plan 07-01 | Added `YahooFinanceProvider.fetchHistoricalDataRange(symbol, from, to)` (commit 84d4a55) and wired Yahoo as the third fallback in `MarketDataService.fetchHistoricalData` with cache write-through (commit 81a1d19). M2-01 universe prefetch (35 tickers × 8 years) now fits in one batch run instead of multi-day slicing around the Alpha Vantage 25-req/day quota. |
 | 2026-05-31 | Plan 07-04 | Built `regime-segmenter.ts` (commit ff925db) with REGIMES constant + sliceByRegime + metricsByRegime. Per-sub-window daily-return recomputation drops cross-window jump returns (Sharpe stays sane on discontinuous bull = 2019+2020-H2+2023+2024 windows); maxDrawdown selected as worst per-sub-window. 12 vitest unit tests landed (commit ea9c40d), including a "100k→180k cross-window jump" test that demonstrably proves volatility stays <1.0. Plan 05 reality-check runner now has its per-regime metrics dependency. |
+| 2026-05-31 | Plan 07-03 | Prefetched 35-ticker M2-01 universe across 2018-01-01 -> 2025-12-31 via Yahoo fallback (commits 6f531f3 + 428033f). Added `scripts/m201-prefetch-universe.ts` (batched 10/10/10/5 runner, per-symbol retry-once) and `scripts/m201-prefetch-report.ts` (cache-hit-only analyzer). 35/35 tickers came back OK with 2010 bars each, gap 0.30% (NYSE-calendar-vs-252/yr rounding noise, not data degradation). META historical continuity confirmed across the 2022 FB->META rename — no symbol-switch needed. Total cache: 14MB under `data/cache/historical/`. Per-ticker quality report at `.planning/phases/07-strategy-reality-check/07-03-prefetch-report.md`. |
 
 ---
 
@@ -95,6 +96,26 @@
 ---
 
 ## Decisions
+
+### 2026-05-31: Plan 07-03 — M2-01 Universe Prefetched via Yahoo (35/35 OK)
+
+**Decision**: Prefetch the 35-ticker M2-01 universe (30 single names + 5 ETFs per `07-CONTEXT.md`) across 2018-01-01 -> 2025-12-31 using a tsx runner (`scripts/m201-prefetch-universe.ts`) that calls `MarketDataService.fetchHistoricalData` directly, bypassing the unreachable `backtest data download` CLI. Persist results in `data/cache/historical/` (gitignored). Generate a per-ticker quality report at `.planning/phases/07-strategy-reality-check/07-03-prefetch-report.md`.
+
+**Rationale**:
+- Plan 05 will run ~1,050 backtests (35 tickers × 2 strategies × ~15 grid points). Network fetches per run are infeasible; cache-once is the only sane approach.
+- The plan's intended `pnpm start backtest data download` path is shadowed by the Commander double-registration bug in `src/index.ts` (Plan 07-01 carry-over). Plan 07-01 already validated the direct-MarketDataService approach as a workable substitute; this plan formalizes it into a committed runner.
+- Runner script (vs one-shot inline command) makes the prefetch reproducible: if the cache TTL expires or the universe needs re-fetching, it's `pnpm tsx scripts/m201-prefetch-universe.ts`.
+- Yahoo fallback (Plan 07-01) is the unlimited free path. With no local AV key, the chain auto-routes 35/35 fetches to Yahoo cleanly.
+- META was the only ticker at risk of pre-2022 coverage issues due to the FB->META rename. Yahoo back-fills under the META symbol continuously (verified: 2018-01-02 open ~$177 matches FB-era price), so no FB-fallback code was needed.
+
+**Verification**:
+- Runner: 35/35 succeeded on first attempt, no retries triggered, total wall time <1 min via Yahoo.
+- Report: 35/35 OK, 0 DEGRADED, 0 FAILED. All tickers returned exactly 2010 bars for 2018-01-02 -> 2025-12-30 (0.30% under the napkin-math 2016 = 252×8, which is just the NYSE-calendar rounding).
+- Cache: 14MB under `data/cache/historical/`, 35 files named `{symbol}_2018-01-01_2025-12-31.json` with `provider: 'yahoo'` metadata.
+
+**Carry-over for Plan 05**:
+- `DataCacheManager.historicalCacheTTL = 24h`. Plan 05 should run within 24h of this prefetch, OR bump the TTL before starting. The runner makes re-prefetching trivial regardless.
+- All 35 tickers are uniformly Yahoo-sourced, so no provider-mix caveats are needed in `RECOMMENDATION.md`.
 
 ### 2026-05-31: Plan 07-04 — Regime Segmenter with Per-Sub-Window Return Recomputation
 
@@ -205,4 +226,4 @@
 
 ---
 
-*Last updated: 2026-05-31 — Plan 07-01 complete (Yahoo unlimited fallback wired into MarketDataService); 07-03 universe prefetch now unblocked from AV quota; M2-04 discussion still pending*
+*Last updated: 2026-05-31 — Plan 07-03 complete (35-ticker M2-01 universe cached 2018-2025 via Yahoo, per-ticker quality report 35/35 OK); Plan 05 reality-check runner can now run network-free; M2-04 discussion still pending*
