@@ -5,10 +5,10 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-01 Strategy Reality Check (Plans 07-01 + 07-02 + 07-03 + 07-04 complete; 07-05/06 pending) + M2-03 done + M2-04 next |
-| Status | 07-03 universe prefetch landed; 35/35 tickers cached 2018-2025 via Yahoo, per-ticker quality report flags 35/35 OK; Plan 05 sweep can run network-free |
+| Current Phase | M2-01 Strategy Reality Check (Plans 07-01..07-05 complete; 07-06 pending) + M2-03 done + M2-04 next |
+| Status | 07-05 reality-check sweep complete; 1050/1050 backtests succeeded (35 tickers × 2 strategies × 15 params), results.jsonl 3.5 MB; engine + adapter bugs fixed inline; aggregate avg bull Sharpe +0.62, bear -0.43 |
 | Last Pivot | 2026-05-23 |
-| Last Updated | 2026-05-31 |
+| Last Updated | 2026-05-30 |
 
 ---
 
@@ -50,7 +50,7 @@
 2. Plan M2-04 (`/gsd:plan-phase`) producing PLAN.md with PM-to-ticker mapping decisions baked in.
 3. Execute M2-04.
 
-**Parallel track (lower priority)**: M2-01 Strategy Reality Check — Plans 07-01/02/03/04 complete. Next is 07-05 (reality-check runner; can sweep ~1,050 backtests against the now-prefetched cache with zero network I/O), then 07-06 (RECOMMENDATION.md). 07-03 cache TTL is 24h — re-run `pnpm tsx scripts/m201-prefetch-universe.ts` if more than a day elapses before Plan 05 starts.
+**Parallel track (lower priority)**: M2-01 Strategy Reality Check — Plans 07-01/02/03/04/05 complete. Plan 05 sweep landed 1050/1050 backtests with full + per-regime metrics at `.planning/phases/07-strategy-reality-check/results.jsonl` (3.5 MB). Next is 07-06 (RECOMMENDATION.md generator that aggregates results.jsonl into KEEP/MODIFY/DISCARD calls per ticker × strategy). Engine + adapter bugs fixed inline (history-to-date, newest-first contract, 300-bar window cap) so future SimpleBacktestEngine runs are functional.
 
 ---
 
@@ -79,6 +79,7 @@
 | 2026-05-31 | Plan 07-01 | Added `YahooFinanceProvider.fetchHistoricalDataRange(symbol, from, to)` (commit 84d4a55) and wired Yahoo as the third fallback in `MarketDataService.fetchHistoricalData` with cache write-through (commit 81a1d19). M2-01 universe prefetch (35 tickers × 8 years) now fits in one batch run instead of multi-day slicing around the Alpha Vantage 25-req/day quota. |
 | 2026-05-31 | Plan 07-04 | Built `regime-segmenter.ts` (commit ff925db) with REGIMES constant + sliceByRegime + metricsByRegime. Per-sub-window daily-return recomputation drops cross-window jump returns (Sharpe stays sane on discontinuous bull = 2019+2020-H2+2023+2024 windows); maxDrawdown selected as worst per-sub-window. 12 vitest unit tests landed (commit ea9c40d), including a "100k→180k cross-window jump" test that demonstrably proves volatility stays <1.0. Plan 05 reality-check runner now has its per-regime metrics dependency. |
 | 2026-05-31 | Plan 07-03 | Prefetched 35-ticker M2-01 universe across 2018-01-01 -> 2025-12-31 via Yahoo fallback (commits 6f531f3 + 428033f). Added `scripts/m201-prefetch-universe.ts` (batched 10/10/10/5 runner, per-symbol retry-once) and `scripts/m201-prefetch-report.ts` (cache-hit-only analyzer). 35/35 tickers came back OK with 2010 bars each, gap 0.30% (NYSE-calendar-vs-252/yr rounding noise, not data degradation). META historical continuity confirmed across the 2022 FB->META rename — no symbol-switch needed. Total cache: 14MB under `data/cache/historical/`. Per-ticker quality report at `.planning/phases/07-strategy-reality-check/07-03-prefetch-report.md`. |
+| 2026-05-30 | Plan 07-05 | Built `scripts/m201-reality-check.ts` (~445 lines) and ran the full 1050-backtest sweep (35 tickers × 2 strategies × 15 params, 2018-2025, FixedBPSSlippageModel(5) + FixedCommissionModel(0)) in 35:24 with 100% success and 0 errors (commits be06560, 748db48). Output `.planning/phases/07-strategy-reality-check/results.jsonl` 3.5 MB. Fixed 3 latent bugs inline (Rule 1): SimpleBacktestEngine was passing `[bar]` instead of history-to-date to strategy.onBar (every indicator-based strategy threw "Insufficient historical data" → 0 trades), StrategyAdapter was passing bars in engine order but strategies expect newest-first (SELL signals fired against 2018 prices in 2025 → 0 closed trades), and the adapter passed full 2010-bar history per call (O(N²) work, sweep would take 140 min). Capped history at 300 bars → 4× speedup. Aggregate result: avg bull Sharpe +0.62, bear -0.43, highVol +0.16 across all 1050 backtests — clean per-regime signature that confirms Plan 04's regime segmenter is doing real work. Plan 06 (RECOMMENDATION.md) is now unblocked. |
 
 ---
 
@@ -96,6 +97,36 @@
 ---
 
 ## Decisions
+
+### 2026-05-30: Plan 07-05 — Reality-Check Sweep Complete (1050/1050) + Engine/Adapter Bugs Fixed Inline
+
+**Decision**: Build `scripts/m201-reality-check.ts` as a standalone tsx runner that sweeps the 35-ticker universe × Momentum + MeanReversion × 15 param combos each (= 1050 backtests) against the Plan 03 cache, persisting one JSONL record per backtest at `.planning/phases/07-strategy-reality-check/results.jsonl` with full-period + per-regime (bull/bear/highVol) metrics. Use append-only JSONL with key-based dedup for resumability. Locked costs: `FixedBPSSlippageModel(5)` per side + `FixedCommissionModel(0)`, $100k initial capital.
+
+**Rationale**:
+- 1050 backtests against 35 cached files × 2010 bars each is infeasible to fan out across CLI invocations; one in-process loop is the only sane approach.
+- Append-only JSONL is the cheapest possible "resumable parameter sweep" — every backtest writes one line, a restart scans existing lines to build a Set of processed `(ticker|strategy|paramKey)` keys and skips them.
+- Hardcoded universe + grids in the script (vs reading from CONTEXT.md) keeps the sweep auditable in one file. CONTEXT.md and the runner are pinned to each other manually — diff one, diff the other.
+- Standalone scripts in `scripts/` are the established pattern (see Plan 03's prefetch). Importing directly from `src/` avoids the broken `backtest data` CLI command from the unrelated Commander double-registration issue.
+
+**Three bugs auto-fixed inline (all Rule 1)**:
+
+1. **SimpleBacktestEngine bug**: `engine.run()` passed `[bar]` to `strategy.onBar()` on every iteration instead of `filteredBars.slice(0, i + 1)`. Every indicator-based strategy threw "Insufficient historical data (minimum N periods required)" on the first bar, aborting the entire backtest. This was true for the legacy `backtest run` CLI command too — that command simply reported the error rather than masking it. Fix: pass history-to-date; wrap in try/catch so warm-up throws degrade to "no signal this bar" rather than terminate.
+
+2. **StrategyAdapter contract bug**: Strategies (Momentum, MeanReversion) assume `historicalData[0]` is the CURRENT price and internally `[...data].reverse()` before feeding the technical-indicators library. Passing engine-order (oldest-first) meant 2018 was treated as current and indicators were computed backward. SELL conditions (RSI > overbought, etc.) evaluated against 2018 prices in 2025 → no SELL signal ever fired → 0 closed trades, 0 strategic information. Fix: adapter reverses bars to newest-first before mapping to HistoricalData[]. Boundary made explicit.
+
+3. **Per-call perf bug**: Adapter passed all 2010 history bars on every call. Technical-indicators library recomputes all rolling windows over the full input each call → O(N²) work per backtest. Each backtest took ~8s; sweep would have taken 140 min. Fix: cap the slice to most recent 300 bars (>> any indicator window we use — longMA=75, MACD slow=26, etc., max ~100). Indicators only read most-recent N values; trimming older bars produces identical signals. Backtest cost dropped to ~2s. Sweep total: 35:24 min (4× speedup).
+
+**Verification**:
+- Smoke test (3 tickers × 1 combo per strategy): 6 successes / 0 errors in 12s after all three fixes; resumability check produced 0 new records on rerun.
+- Full sweep: 1050/1050 successes, 0 errors, 0 retries, 0 network calls in 2124s (35:24 min).
+- Spot-check AAPL momentum (shortMA=10, longMA=75, minConfidence=55): full Sharpe 0.926, return 259%, maxDD -26%, 31 trades, winRate 48%. Per-regime: bull Sharpe 1.38 / bear -1.51 / highVol 1.16 — exactly the textbook contrast we wanted.
+- Aggregate over all 1050: avg bull Sharpe **+0.62**, bear **-0.43**, highVol **+0.16**. Per-regime segmentation is delivering real signal.
+
+**Carry-over for Plan 06**:
+- `.planning/phases/07-strategy-reality-check/results.jsonl` is the input — 3.5 MB, 1050 records, schema documented in `07-05-SUMMARY.md`.
+- All three bugs are now FIXED. Any future SimpleBacktestEngine + StrategyAdapter usage (M2-05 ai-augmented strategy engine, future tuning, etc.) inherits the fixes.
+- Best raw-technical result: LLY mean-reversion (rsiOversold=40, rsiOverbought=70) — full Sharpe 1.077, return +442%, maxDD -21%. Plan 06 should highlight.
+- Worst: PFE momentum at minConfidence=65 — Sharpe -0.45 invariant to shortMA setting. Plan 06 should call out as a "no parameter sweep saves this" DISCARD.
 
 ### 2026-05-31: Plan 07-03 — M2-01 Universe Prefetched via Yahoo (35/35 OK)
 
@@ -226,4 +257,4 @@
 
 ---
 
-*Last updated: 2026-05-31 — Plan 07-03 complete (35-ticker M2-01 universe cached 2018-2025 via Yahoo, per-ticker quality report 35/35 OK); Plan 05 reality-check runner can now run network-free; M2-04 discussion still pending*
+*Last updated: 2026-05-30 — Plan 07-05 complete (1050/1050 reality-check backtests landed in 35:24 with 100% success; 3 latent engine/adapter bugs fixed inline; aggregate per-regime signature: bull +0.62 / bear -0.43 / highVol +0.16); Plan 07-06 (RECOMMENDATION.md) unblocked; M2-04 discussion still pending*
