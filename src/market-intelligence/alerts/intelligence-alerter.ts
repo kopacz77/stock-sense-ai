@@ -25,13 +25,36 @@ interface CooldownRecord {
 interface DailyCap {
   /** ET-day YYYY-MM-DD; resets when the date changes. */
   etDate: string;
-  /** Telegram sends made today (digests excluded). */
+  /** Telegram sends made today (digests + break-glass excluded). */
   sentCount: number;
+}
+
+/**
+ * Per-ET-day digest + break-glass slot tracker. Each slot can fire at most
+ * once per ET trading day; the bag resets at ET midnight (etDate roll).
+ */
+interface DigestSlotsFired {
+  morning: boolean;
+  midday: boolean;
+  close: boolean;
+  breakGlass: boolean;
+}
+
+interface DigestSlotsState {
+  etDate: string;
+  slots: DigestSlotsFired;
 }
 
 interface CooldownState {
   records: CooldownRecord[];
   dailyCap?: DailyCap;
+  /** Digest + break-glass per-ET-day tracker (Plan 10-06). */
+  digestSlots?: DigestSlotsState;
+  /**
+   * Total Telegram sends today across ALL paths (CONFIRMED + DIVERGENCE +
+   * digests + break-glass). Hard backstop against runaway-bug fan-out.
+   */
+  totalSentToday?: { etDate: string; count: number };
 }
 
 export interface AlerterOptions {
@@ -44,12 +67,21 @@ export interface AlerterOptions {
    */
   accelerationOverridePp?: number;
   /**
-   * Hard cap on Telegram sends per ET trading day (digests excluded).
-   * Operator preference: noisy mornings shouldn't burn the day's signal budget.
-   * Defaults to 4. Sort proposed alerts by alertPriority() before dispatching
-   * so the highest-impact items win the slots.
+   * Hard cap on CONFIRMED + DIVERGENCE Telegram sends per ET trading day.
+   * Digests + break-glass do NOT consume this cap (they have their own slots).
+   * Defaults to 4. Operator-tunable backstop from M2-03; intentionally kept in
+   * place after M2-04 digests ship — see absoluteCapPerDay for the runaway-bug
+   * defense.
    */
   dailyCapLimit?: number;
+  /**
+   * Hard absolute backstop on TOTAL Telegram sends per ET trading day across
+   * ALL paths (CONFIRMED + DIVERGENCE + digests + break-glass). Defaults to 8:
+   * 4 CONFIRMED/DIVERGENCE + 3 digests + 1 break-glass + headroom. If this is
+   * ever hit, something is wrong — assume a bug, suppress further sends, and
+   * keep audit-logging.
+   */
+  absoluteCapPerDay?: number;
 }
 
 /**
@@ -85,11 +117,12 @@ export function alertPriority(alert: IntelligenceAlert): number {
  */
 export class IntelligenceAlerter {
   private telegram: TelegramService;
-  private log: JsonlStore<IntelligenceAlert & { suppressed?: boolean }>;
+  private log: JsonlStore<IntelligenceAlert & { suppressed?: boolean; suppressReason?: string }>;
   private readonly cooldownFile: string;
   private readonly cooldownMs: number;
   private readonly accelerationPp: number;
   private readonly dailyCapLimit: number;
+  private readonly absoluteCapPerDay: number;
 
   constructor(
     dataDir = "./data/intel",
@@ -97,42 +130,67 @@ export class IntelligenceAlerter {
     options: AlerterOptions = {},
   ) {
     this.telegram = telegram ?? new TelegramService();
-    this.log = new JsonlStore<IntelligenceAlert & { suppressed?: boolean }>(
-      dataDir,
-      "alerts-fired",
-    );
+    this.log = new JsonlStore<
+      IntelligenceAlert & { suppressed?: boolean; suppressReason?: string }
+    >(dataDir, "alerts-fired");
     this.cooldownFile = path.join(dataDir, "alert-cooldown.json");
     this.cooldownMs = (options.cooldownHours ?? 4) * 60 * 60 * 1000;
     this.accelerationPp = options.accelerationOverridePp ?? 3;
     this.dailyCapLimit = options.dailyCapLimit ?? 4;
+    this.absoluteCapPerDay = options.absoluteCapPerDay ?? 8;
   }
 
+  /**
+   * Dispatch a CONFIRMED or DIVERGENCE intelligence alert.
+   *
+   * Digests should use `sendDigest()`; break-glass alerts should use
+   * `sendBreakGlass()`. If `send()` receives a DAILY_DIGEST alert, it
+   * defensively rejects it (audit-logged) — digests now have their own
+   * per-ET-day slot tracking and must not bypass it.
+   */
   async send(alert: IntelligenceAlert): Promise<boolean> {
-    // Digests bypass cooldown — they fire on a fixed schedule, not on market moves.
+    // Defensive guard: digests routed here are a wiring bug — use sendDigest.
     if (alert.kind === "DAILY_DIGEST") {
-      await this.log.append(alert);
-      const message = this.toTelegramMessage(alert);
-      return this.telegram.sendAlert(message);
+      await this.log.append({
+        ...alert,
+        suppressed: true,
+        suppressReason: "DAILY_DIGEST routed through send() — use sendDigest()",
+      });
+      return false;
     }
 
     const marketId = alert.market.id;
     const moveAbs = Math.abs(alert.pmMovePp);
 
     const state = await this.readCooldownState();
-
-    // Daily cap (hard backstop until M2-04 ships the scheduled-digest model).
-    // Roll the counter on ET date change so the budget resets at midnight ET,
-    // matching the trading day rather than UTC.
     const etDate = etDateString(new Date());
+
+    // Absolute backstop across all paths — protects against runaway-bug fan-out.
+    const totalToday = totalForToday(state.totalSentToday, etDate);
+    if (totalToday.count >= this.absoluteCapPerDay) {
+      await this.log.append({
+        ...alert,
+        suppressed: true,
+        suppressReason: `absolute-cap reached (${this.absoluteCapPerDay}/day)`,
+      });
+      await this.writeState({ ...state, totalSentToday: totalToday });
+      return false;
+    }
+
+    // Per-day cap for CONFIRMED + DIVERGENCE only. Digests + break-glass have
+    // their own slots and do NOT consume this cap.
     const dailyCap: DailyCap =
       state.dailyCap && state.dailyCap.etDate === etDate
         ? { ...state.dailyCap }
         : { etDate, sentCount: 0 };
 
     if (dailyCap.sentCount >= this.dailyCapLimit) {
-      // Budget spent for the day — log for the audit/data layer but stay silent.
-      await this.log.append({ ...alert, suppressed: true });
-      await this.writeState({ ...state, dailyCap });
+      await this.log.append({
+        ...alert,
+        suppressed: true,
+        suppressReason: `daily-cap reached (${this.dailyCapLimit}/day for CONFIRMED+DIVERGENCE)`,
+      });
+      await this.writeState({ ...state, dailyCap, totalSentToday: totalToday });
       return false;
     }
 
@@ -144,9 +202,12 @@ export class IntelligenceAlerter {
     );
 
     if (recent && moveAbs - recent.lastMoveAbsPp < this.accelerationPp) {
-      // Same market + kind, within cooldown, no acceleration — suppress.
-      await this.log.append({ ...alert, suppressed: true });
-      await this.writeState({ ...state, dailyCap });
+      await this.log.append({
+        ...alert,
+        suppressed: true,
+        suppressReason: "per-(market,kind) cooldown active",
+      });
+      await this.writeState({ ...state, dailyCap, totalSentToday: totalToday });
       return false;
     }
 
@@ -156,6 +217,7 @@ export class IntelligenceAlerter {
 
     if (ok) {
       dailyCap.sentCount += 1;
+      totalToday.count += 1;
       const others = state.records.filter(
         (r) => !(r.marketId === marketId && r.kind === alert.kind),
       );
@@ -165,13 +227,164 @@ export class IntelligenceAlerter {
           { marketId, kind: alert.kind, lastMoveAbsPp: moveAbs, firedAt: new Date().toISOString() },
         ],
         dailyCap,
+        digestSlots: state.digestSlots,
+        totalSentToday: totalToday,
       });
     } else {
-      // Telegram itself failed — don't consume a daily slot for it, but persist
-      // the unchanged cap so we don't lose other state.
-      await this.writeState({ ...state, dailyCap });
+      await this.writeState({ ...state, dailyCap, totalSentToday: totalToday });
     }
     return ok;
+  }
+
+  /**
+   * Dispatch a scheduled digest. Returns true if the slot for `payload.flavor`
+   * was available today and the Telegram send succeeded; false if the slot was
+   * already used or the absolute cap was hit.
+   *
+   * Digests do NOT increment the CONFIRMED/DIVERGENCE daily cap, but they DO
+   * count toward the absolute backstop.
+   */
+  async sendDigest(payload: DigestPayload): Promise<boolean> {
+    const state = await this.readCooldownState();
+    const etDate = etDateString(new Date());
+    const totalToday = totalForToday(state.totalSentToday, etDate);
+
+    if (totalToday.count >= this.absoluteCapPerDay) {
+      const alert = this.buildDigestAlert(payload);
+      await this.log.append({
+        ...alert,
+        suppressed: true,
+        suppressReason: `absolute-cap reached (${this.absoluteCapPerDay}/day)`,
+      });
+      await this.writeState({ ...state, totalSentToday: totalToday });
+      return false;
+    }
+
+    const slots = freshSlotsIfStale(state.digestSlots, etDate);
+    const slotKey = slotKeyForFlavor(payload.flavor);
+    if (slots.slots[slotKey]) {
+      const alert = this.buildDigestAlert(payload);
+      await this.log.append({
+        ...alert,
+        suppressed: true,
+        suppressReason: `${payload.flavor} slot already used today`,
+      });
+      await this.writeState({ ...state, digestSlots: slots, totalSentToday: totalToday });
+      return false;
+    }
+
+    const alert = this.buildDigestAlert(payload);
+    await this.log.append(alert);
+    const message = this.toTelegramMessage(alert);
+    const ok = await this.telegram.sendAlert(message);
+
+    if (ok) {
+      slots.slots[slotKey] = true;
+      totalToday.count += 1;
+      await this.writeState({
+        ...state,
+        digestSlots: slots,
+        totalSentToday: totalToday,
+      });
+    } else {
+      await this.writeState({ ...state, totalSentToday: totalToday });
+    }
+    return ok;
+  }
+
+  /**
+   * Dispatch a break-glass alert (fires at most once per ET day). Reason is
+   * persisted to the audit log so the operator can attribute the fire later.
+   *
+   * If `alert` is null, a synthetic DigestAlert-shaped break-glass body is
+   * sent using `reason` as the body (used for catalyst-only triggers where
+   * no specific PM-move alert is the cause).
+   *
+   * Break-glass does NOT consume the CONFIRMED/DIVERGENCE cap but DOES count
+   * toward the absolute backstop.
+   */
+  async sendBreakGlass(
+    alert: IntelligenceAlert | null,
+    reason: string,
+  ): Promise<boolean> {
+    const state = await this.readCooldownState();
+    const etDate = etDateString(new Date());
+    const totalToday = totalForToday(state.totalSentToday, etDate);
+    const slots = freshSlotsIfStale(state.digestSlots, etDate);
+
+    const effectiveAlert: IntelligenceAlert =
+      alert ?? this.buildBreakGlassSyntheticAlert(reason);
+
+    if (totalToday.count >= this.absoluteCapPerDay) {
+      await this.log.append({
+        ...effectiveAlert,
+        suppressed: true,
+        suppressReason: `absolute-cap reached (${this.absoluteCapPerDay}/day)`,
+      });
+      await this.writeState({ ...state, totalSentToday: totalToday });
+      return false;
+    }
+
+    if (slots.slots.breakGlass) {
+      await this.log.append({
+        ...effectiveAlert,
+        suppressed: true,
+        suppressReason: `break-glass slot already used today (last reason: ${reason})`,
+      });
+      await this.writeState({ ...state, digestSlots: slots, totalSentToday: totalToday });
+      return false;
+    }
+
+    await this.log.append({
+      ...effectiveAlert,
+      suppressReason: `break-glass: ${reason}`,
+    });
+    const message = this.toBreakGlassTelegramMessage(effectiveAlert, reason);
+    const ok = await this.telegram.sendAlert(message);
+
+    if (ok) {
+      slots.slots.breakGlass = true;
+      totalToday.count += 1;
+      await this.writeState({
+        ...state,
+        digestSlots: slots,
+        totalSentToday: totalToday,
+      });
+    } else {
+      await this.writeState({ ...state, totalSentToday: totalToday });
+    }
+    return ok;
+  }
+
+  private buildDigestAlert(payload: DigestPayload): DigestAlert {
+    return {
+      kind: "DAILY_DIGEST",
+      flavor: payload.flavor,
+      body: renderDigestMarkdown(payload),
+      payload,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  private buildBreakGlassSyntheticAlert(reason: string): DigestAlert {
+    return {
+      kind: "DAILY_DIGEST",
+      flavor: "MIDDAY", // arbitrary — break-glass title overrides flavor display
+      body: `*Break-glass*: ${reason}`,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  private toBreakGlassTelegramMessage(
+    alert: IntelligenceAlert,
+    reason: string,
+  ): TelegramMessage {
+    const base = this.toTelegramMessage(alert);
+    return {
+      ...base,
+      priority: "URGENT",
+      title: `🚨 Break-Glass — ${reason}`,
+    };
   }
 
   private async readCooldownState(): Promise<CooldownState> {
@@ -180,8 +393,17 @@ export class IntelligenceAlerter {
       const parsed = JSON.parse(raw) as CooldownState;
       // Prune records older than 2x cooldown to keep the file bounded.
       const cutoff = Date.now() - this.cooldownMs * 2;
-      const fresh = parsed.records.filter((r) => Date.parse(r.firedAt) >= cutoff);
-      return { records: fresh, dailyCap: parsed.dailyCap };
+      const fresh = (parsed.records ?? []).filter(
+        (r) => Date.parse(r.firedAt) >= cutoff,
+      );
+      // Plan 10-06: digestSlots + totalSentToday must round-trip across calls.
+      // Dropping them here was a silent bug — slot tracking would reset on
+      // every read, breaking the at-most-once-per-day guarantee.
+      const out: CooldownState = { records: fresh };
+      if (parsed.dailyCap !== undefined) out.dailyCap = parsed.dailyCap;
+      if (parsed.digestSlots !== undefined) out.digestSlots = parsed.digestSlots;
+      if (parsed.totalSentToday !== undefined) out.totalSentToday = parsed.totalSentToday;
+      return out;
     } catch {
       return { records: [] };
     }
@@ -302,4 +524,38 @@ function etDateString(d: Date): string {
     month: "2-digit",
     day: "2-digit",
   }).format(d);
+}
+
+/** Returns a fresh slot bag if the stored etDate is stale (or absent), else clones the stored. */
+function freshSlotsIfStale(
+  current: DigestSlotsState | undefined,
+  etDate: string,
+): DigestSlotsState {
+  if (current && current.etDate === etDate) {
+    return { etDate, slots: { ...current.slots } };
+  }
+  return {
+    etDate,
+    slots: { morning: false, midday: false, close: false, breakGlass: false },
+  };
+}
+
+function slotKeyForFlavor(flavor: DigestPayload["flavor"]): keyof DigestSlotsFired {
+  switch (flavor) {
+    case "MORNING":
+      return "morning";
+    case "MIDDAY":
+      return "midday";
+    case "CLOSE":
+      return "close";
+  }
+}
+
+/** Returns a fresh per-day total if stored is stale, else clones it. */
+function totalForToday(
+  current: { etDate: string; count: number } | undefined,
+  etDate: string,
+): { etDate: string; count: number } {
+  if (current && current.etDate === etDate) return { etDate, count: current.count };
+  return { etDate, count: 0 };
 }

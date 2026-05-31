@@ -110,6 +110,15 @@ export interface CycleResult {
   rollupTickerCount: number;
   /** Number of PM-derived TickerSignal records produced from today's snapshots. */
   pmTickerSignalCount: number;
+  /**
+   * Digest fires originating from this cycle. Typically 0 — digests fire from
+   * the scheduler heartbeat, not from cycleRunner. Reported here for symmetry.
+   */
+  digestsFiredThisCycle: number;
+  /** True if step 3.95 fired the break-glass slot this cycle. */
+  breakGlassFiredThisCycle: boolean;
+  /** Human-readable reason for the break-glass fire (empty if not fired). */
+  breakGlassReason: string;
 }
 
 /**
@@ -235,8 +244,7 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
   // ── 3.8 Daily calendar refresh (24h-guarded; separate state file).
   await maybeRefreshCalendar(options, dataDir);
 
-  // ── 3.9 Build today's rollup. Plan 10-06 will insert DigestBuilder as step 3.95
-  // between this and dispatch — leave that slot clean.
+  // ── 3.9 Build today's rollup.
   let rollupSummaries: TickerDaySummary[] = [];
   if (!options.skipRollup) {
     try {
@@ -245,6 +253,35 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
     } catch (err) {
       console.warn(
         `[cycle-runner] rollup build failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  // ── 3.95 Break-glass evaluation (Plan 10-06). Runs once per cycle; alerter's
+  //    per-ET-day slot tracking guarantees at most one fire per day across the
+  //    pipeline. Criteria are documented in evaluateBreakGlass().
+  let breakGlassFired = false;
+  let breakGlassReason = "";
+  if (!options.dryRun) {
+    try {
+      const allCatalysts = await loadAllCatalysts(dataDir);
+      const evalResult = evaluateBreakGlass(
+        alerts,
+        scoringResult.scored,
+        allCatalysts,
+        new Date(),
+      );
+      if (evalResult.reason.length > 0) {
+        const alerter = new IntelligenceAlerter(dataDir);
+        const ok = await alerter.sendBreakGlass(evalResult.trigger, evalResult.reason);
+        if (ok) {
+          breakGlassFired = true;
+          breakGlassReason = evalResult.reason;
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[cycle-runner] break-glass evaluation failed: ${err instanceof Error ? err.message : err}`,
       );
     }
   }
@@ -277,7 +314,74 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
     backlogSize: scoringResult.backlogSize,
     rollupTickerCount: rollupSummaries.length,
     pmTickerSignalCount: pmSignals.length,
+    digestsFiredThisCycle: 0,
+    breakGlassFiredThisCycle: breakGlassFired,
+    breakGlassReason,
   };
+}
+
+/**
+ * Evaluate whether this cycle should trip the break-glass slot.
+ *
+ * Three trigger criteria (any one fires; first match wins):
+ *   1. PM move >= 15pp on any CONFIRMED/DIVERGENCE alert.
+ *   2. A scored article with materiality >= 0.9 AND |sentiment| >= 0.7
+ *      (proxy for LLM-rated criticality >= 0.9).
+ *   3. A non-archived catalyst with expectedDate within next 12h,
+ *      magnitudePrior >= 4, confidence >= 0.7, direction !== "uncertain".
+ *
+ * Returns `{ trigger, reason }`. When the catalyst path fires there is no
+ * underlying IntelligenceAlert; `trigger` is null and the alerter will synthesize
+ * a break-glass payload from the reason.
+ */
+function evaluateBreakGlass(
+  alerts: IntelligenceAlert[],
+  scored: ScoredArticle[],
+  catalysts: CatalystFlag[],
+  now: Date,
+): { trigger: IntelligenceAlert | null; reason: string } {
+  // 1) Big PM move
+  for (const a of alerts) {
+    if (a.kind === "DAILY_DIGEST") continue;
+    if (Math.abs(a.pmMovePp) >= 15) {
+      return {
+        trigger: a,
+        reason: `PM move ${a.pmMovePp >= 0 ? "+" : ""}${a.pmMovePp.toFixed(1)} pp (>=15)`,
+      };
+    }
+  }
+  // 2) High-criticality scored article
+  const crit = scored.find(
+    (s) => s.materiality >= 0.9 && Math.abs(s.sentiment) >= 0.7,
+  );
+  if (crit) {
+    const matched = alerts.find(
+      (a) =>
+        a.kind === "HEADLINE_PM_CONFIRMED" && a.article.id === crit.sourceArticleId,
+    );
+    return {
+      trigger: matched ?? null,
+      reason: `Critical article (mat=${crit.materiality.toFixed(2)}, |sent|=${Math.abs(crit.sentiment).toFixed(2)})`,
+    };
+  }
+  // 3) Imminent high-magnitude scheduled catalyst
+  const cutoff = now.getTime() + 12 * 60 * 60 * 1000;
+  const cat = catalysts.find((c) => {
+    if (c.archived === true) return false;
+    if (c.magnitudePrior < 4) return false;
+    if (c.confidence < 0.7) return false;
+    if (c.direction === "uncertain") return false;
+    const exp = Date.parse(c.expectedDate);
+    if (!Number.isFinite(exp)) return false;
+    return exp >= now.getTime() && exp <= cutoff;
+  });
+  if (cat) {
+    return {
+      trigger: null,
+      reason: `Imminent ${cat.type} ${cat.expectedDate} (mag=${cat.magnitudePrior}, conf=${cat.confidence.toFixed(2)}, dir=${cat.direction})`,
+    };
+  }
+  return { trigger: null, reason: "" };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
