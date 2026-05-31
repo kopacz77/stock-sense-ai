@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-05-31",
+  "themes": [
+    { "canonical": "fed-rate-cuts",        "aliases": ["rate-cut", "rate-cuts", "fed-cut"] },
+    { "canonical": "fed-rate-hikes",       "aliases": ["rate-hike", "rate-hikes"] },
+    { "canonical": "inflation",            "aliases": ["cpi", "ppi", "pce-inflation"] },
+    { "canonical": "jobs-report",          "aliases": ["nfp", "nonfarm-payrolls", "unemployment"] },
+    { "canonical": "recession-risk",       "aliases": ["recession", "yield-curve-inversion"] },
+    { "canonical": "ai-infra",             "aliases": ["ai-buildout", "datacenter-buildout", "stargate"] },
+    { "canonical": "ai-bubble",            "aliases": ["ai-overvaluation", "ai-correction"] },
+    { "canonical": "china-decoupling",     "aliases": ["china-tariff", "china-trade-war"] },
+    { "canonical": "tariff-exposure",      "aliases": ["tariff", "trade-war"] },
+    { "canonical": "sanctions",            "aliases": ["sanction", "export-controls"] },
+    { "canonical": "energy-supply-shock",  "aliases": ["opec-cut", "oil-supply-shock", "iran-strike"] },
+    { "canonical": "geopolitical-conflict", "aliases": ["war", "invasion", "ceasefire"] },
+    { "canonical": "regulation-tech",      "aliases": ["antitrust", "doj-tech"] },
+    { "canonical": "regulation-bank",      "aliases": ["bank-stress", "basel"] },
+    { "canonical": "crypto-rally",         "aliases": ["btc-rally", "btc-strength"] },
+    { "canonical": "crypto-selloff",       "aliases": ["btc-tank", "crypto-crash"] },
+    { "canonical": "etf-flows",            "aliases": ["spot-etf", "etf-approval"] },
+    { "canonical": "earnings-beat",        "aliases": ["beat", "guidance-raise"] },
+    { "canonical": "earnings-miss",        "aliases": ["miss", "guidance-cut"] },
+    { "canonical": "ma-confirmed",         "aliases": ["acquisition", "merger", "buyout"] },
+    { "canonical": "ma-rumor",             "aliases": ["takeover-rumor"] },
+    { "canonical": "fda-approval",         "aliases": ["pdufa-approval"] },
+    { "canonical": "fda-rejection",        "aliases": ["pdufa-rejection", "crl"] },
+    { "canonical": "lawsuit-major",        "aliases": ["class-action", "doj-suit"] }
+  ]
+}

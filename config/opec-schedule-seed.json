@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-05-31",
+  "_hint": "Each entry: { meeting_type ('OPEC' | 'JMMC' | 'extraordinary'), date (YYYY-MM-DD), source_url }. Refresh annually (December) from opec.org/opec_web/en/press_room/2917.htm plus any announced extraordinary meetings.",
+  "entries": []
+}

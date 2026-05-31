@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-05-31",
+  "mappings": [
+    {
+      "match": { "eventSlug": "iran-ceasefire-continues-through", "slugPrefix": null, "questionContains": null },
+      "tickers": [
+        { "ticker": "XLE",  "direction": "long",  "weight": 1.0 },
+        { "ticker": "USO",  "direction": "long",  "weight": 1.0 },
+        { "ticker": "LMT",  "direction": "long",  "weight": 0.6 },
+        { "ticker": "RTX",  "direction": "long",  "weight": 0.6 },
+        { "ticker": "JETS", "direction": "short", "weight": 0.5 }
+      ],
+      "interpretation": "noPp",
+      "rationale": "Yes resolves = ceasefire holds = bearish energy/defense, bullish airlines. We invert (noPp) so a fall in Yes price (= war risk back) flows as a bullish push into XLE/USO/LMT/RTX.",
+      "addedBy": "manual-seed",
+      "addedAt": "2026-05-31"
+    },
+    {
+      "match": { "eventSlug": null, "slugPrefix": "will-bitcoin-reach-", "questionContains": null },
+      "tickers": [
+        { "ticker": "COIN", "direction": "long", "weight": 0.8 },
+        { "ticker": "MSTR", "direction": "long", "weight": 1.0 },
+        { "ticker": "IBIT", "direction": "long", "weight": 1.0 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "Yes price rising = BTC strength = bullish all three.",
+      "addedBy": "manual-seed",
+      "addedAt": "2026-05-31"
+    },
+    {
+      "match": { "eventSlug": null, "slugPrefix": "fed-decision-in-", "questionContains": "rate cut" },
+      "tickers": [
+        { "ticker": "TLT", "direction": "long",  "weight": 1.0 },
+        { "ticker": "IEF", "direction": "long",  "weight": 0.7 },
+        { "ticker": "XLF", "direction": "short", "weight": 0.5 },
+        { "ticker": "IWM", "direction": "long",  "weight": 0.6 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "Higher Yes price for a rate cut = bullish duration (TLT/IEF), modest small-cap tailwind (IWM), drag on bank NIM (XLF short).",
+      "addedBy": "manual-seed",
+      "addedAt": "2026-05-31"
+    }
+  ],
+  "proposed": []
+}

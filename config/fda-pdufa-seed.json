@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-05-31",
+  "_hint": "Each entry: { ticker, drug_name, indication, expected_date (YYYY-MM-DD), source_url, last_verified (YYYY-MM-DD) }. Refresh quarterly from biopharmcatalyst.com/calendars/pdufa-calendar or marketbeat.com/fda-calendar/upcoming.",
+  "entries": []
+}

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-05-31",
+  "tickers": [
+    { "ticker": "XLE",  "sector": "Energy" },
+    { "ticker": "XLF",  "sector": "Financials" },
+    { "ticker": "XLK",  "sector": "Technology" },
+    { "ticker": "XLV",  "sector": "Healthcare" },
+    { "ticker": "XLI",  "sector": "Industrials" },
+    { "ticker": "XLU",  "sector": "Utilities" },
+    { "ticker": "XLY",  "sector": "Consumer Discretionary" },
+    { "ticker": "XLP",  "sector": "Consumer Staples" },
+    { "ticker": "XLB",  "sector": "Materials" },
+    { "ticker": "XLRE", "sector": "Real Estate" },
+    { "ticker": "XLC",  "sector": "Communication Services" },
+    { "ticker": "GLD",  "sector": "Gold" },
+    { "ticker": "SLV",  "sector": "Silver" },
+    { "ticker": "TLT",  "sector": "Long Treasuries" },
+    { "ticker": "IEF",  "sector": "Mid Treasuries" },
+    { "ticker": "USO",  "sector": "Oil" },
+    { "ticker": "UNG",  "sector": "Natural Gas" },
+    { "ticker": "BITO", "sector": "BTC Futures" },
+    { "ticker": "IBIT", "sector": "Spot BTC" },
+    { "ticker": "JETS", "sector": "Airlines" },
+    { "ticker": "IWM",  "sector": "Small Cap" },
+    { "ticker": "QQQ",  "sector": "Nasdaq" },
+    { "ticker": "SPY",  "sector": "S&P 500" },
+    { "ticker": "VIXY", "sector": "VIX proxy" }
+  ]
+}
