@@ -15,7 +15,12 @@ export default defineConfig({
         "**/*.config.ts",
       ],
     },
-    include: ["tests/**/*.test.ts", "tests/**/*.spec.ts"],
+    include: [
+      "tests/**/*.test.ts",
+      "tests/**/*.spec.ts",
+      "src/**/__tests__/**/*.test.ts",
+      "src/**/__tests__/**/*.spec.ts",
+    ],
     exclude: ["node_modules/", "dist/"],
   },
 });
