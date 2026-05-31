@@ -20,8 +20,16 @@ interface CooldownRecord {
   firedAt: string;
 }
 
+interface DailyCap {
+  /** ET-day YYYY-MM-DD; resets when the date changes. */
+  etDate: string;
+  /** Telegram sends made today (digests excluded). */
+  sentCount: number;
+}
+
 interface CooldownState {
   records: CooldownRecord[];
+  dailyCap?: DailyCap;
 }
 
 export interface AlerterOptions {
@@ -33,6 +41,30 @@ export interface AlerterOptions {
    * escalated from -4pp to -15pp within the cooldown window.
    */
   accelerationOverridePp?: number;
+  /**
+   * Hard cap on Telegram sends per ET trading day (digests excluded).
+   * Operator preference: noisy mornings shouldn't burn the day's signal budget.
+   * Defaults to 4. Sort proposed alerts by alertPriority() before dispatching
+   * so the highest-impact items win the slots.
+   */
+  dailyCapLimit?: number;
+}
+
+/**
+ * Priority score for ranking proposed alerts within a polling cycle.
+ *
+ * Combines move magnitude with market depth (log of 24h volume) so a 4pp
+ * move on a $6M Iran market outranks a 4pp move on a $300k threshold market.
+ * Adds a fixed bonus to CONFIRMED alerts since a corroborating headline
+ * makes them more actionable than a bare divergence. Digests always rank
+ * highest so the scheduled brief never gets squeezed out by a noisy cycle.
+ */
+export function alertPriority(alert: IntelligenceAlert): number {
+  if (alert.kind === "DAILY_DIGEST") return Number.POSITIVE_INFINITY;
+  const movePart = Math.abs(alert.pmMovePp);
+  const volPart = Math.log10(Math.max(alert.market.volume24hr, 1));
+  const confirmedBonus = alert.kind === "HEADLINE_PM_CONFIRMED" ? 15 : 0;
+  return movePart * volPart + confirmedBonus;
 }
 
 /**
@@ -55,6 +87,7 @@ export class IntelligenceAlerter {
   private readonly cooldownFile: string;
   private readonly cooldownMs: number;
   private readonly accelerationPp: number;
+  private readonly dailyCapLimit: number;
 
   constructor(
     dataDir = "./data/intel",
@@ -69,6 +102,7 @@ export class IntelligenceAlerter {
     this.cooldownFile = path.join(dataDir, "alert-cooldown.json");
     this.cooldownMs = (options.cooldownHours ?? 4) * 60 * 60 * 1000;
     this.accelerationPp = options.accelerationOverridePp ?? 3;
+    this.dailyCapLimit = options.dailyCapLimit ?? 4;
   }
 
   async send(alert: IntelligenceAlert): Promise<boolean> {
@@ -83,6 +117,23 @@ export class IntelligenceAlerter {
     const moveAbs = Math.abs(alert.pmMovePp);
 
     const state = await this.readCooldownState();
+
+    // Daily cap (hard backstop until M2-04 ships the scheduled-digest model).
+    // Roll the counter on ET date change so the budget resets at midnight ET,
+    // matching the trading day rather than UTC.
+    const etDate = etDateString(new Date());
+    const dailyCap: DailyCap =
+      state.dailyCap && state.dailyCap.etDate === etDate
+        ? { ...state.dailyCap }
+        : { etDate, sentCount: 0 };
+
+    if (dailyCap.sentCount >= this.dailyCapLimit) {
+      // Budget spent for the day — log for the audit/data layer but stay silent.
+      await this.log.append({ ...alert, suppressed: true });
+      await this.writeState({ ...state, dailyCap });
+      return false;
+    }
+
     const recent = state.records.find(
       (r) =>
         r.marketId === marketId &&
@@ -93,6 +144,7 @@ export class IntelligenceAlerter {
     if (recent && moveAbs - recent.lastMoveAbsPp < this.accelerationPp) {
       // Same market + kind, within cooldown, no acceleration — suppress.
       await this.log.append({ ...alert, suppressed: true });
+      await this.writeState({ ...state, dailyCap });
       return false;
     }
 
@@ -101,7 +153,21 @@ export class IntelligenceAlerter {
     const ok = await this.telegram.sendAlert(message);
 
     if (ok) {
-      await this.recordCooldown(state, marketId, alert.kind, moveAbs);
+      dailyCap.sentCount += 1;
+      const others = state.records.filter(
+        (r) => !(r.marketId === marketId && r.kind === alert.kind),
+      );
+      await this.writeState({
+        records: [
+          ...others,
+          { marketId, kind: alert.kind, lastMoveAbsPp: moveAbs, firedAt: new Date().toISOString() },
+        ],
+        dailyCap,
+      });
+    } else {
+      // Telegram itself failed — don't consume a daily slot for it, but persist
+      // the unchanged cap so we don't lose other state.
+      await this.writeState({ ...state, dailyCap });
     }
     return ok;
   }
@@ -113,27 +179,15 @@ export class IntelligenceAlerter {
       // Prune records older than 2x cooldown to keep the file bounded.
       const cutoff = Date.now() - this.cooldownMs * 2;
       const fresh = parsed.records.filter((r) => Date.parse(r.firedAt) >= cutoff);
-      return { records: fresh };
+      return { records: fresh, dailyCap: parsed.dailyCap };
     } catch {
       return { records: [] };
     }
   }
 
-  private async recordCooldown(
-    state: CooldownState,
-    marketId: string,
-    kind: string,
-    lastMoveAbsPp: number,
-  ): Promise<void> {
-    const others = state.records.filter((r) => !(r.marketId === marketId && r.kind === kind));
-    const next: CooldownState = {
-      records: [
-        ...others,
-        { marketId, kind, lastMoveAbsPp, firedAt: new Date().toISOString() },
-      ],
-    };
+  private async writeState(state: CooldownState): Promise<void> {
     await fs.mkdir(path.dirname(this.cooldownFile), { recursive: true });
-    await fs.writeFile(this.cooldownFile, JSON.stringify(next, null, 2), "utf8");
+    await fs.writeFile(this.cooldownFile, JSON.stringify(state, null, 2), "utf8");
   }
 
   private toTelegramMessage(alert: IntelligenceAlert): TelegramMessage {
@@ -230,4 +284,14 @@ export class IntelligenceAlerter {
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
     return n.toFixed(0);
   }
+}
+
+/** YYYY-MM-DD in America/New_York. Used to roll the daily-cap counter at ET midnight. */
+function etDateString(d: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
 }

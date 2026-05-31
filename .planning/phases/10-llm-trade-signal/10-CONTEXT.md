@@ -6,9 +6,9 @@
 <domain>
 ## Phase Boundary
 
-Turn the M2-03 raw alert stream into a **machine-readable signal layer** that the M2-05 strategy engine can query: per-article scored sentiment + materiality, per-ticker rolling rollups, structured catalyst flags (scheduled + emerging), LLM-discovered theme tags (with operator review gate), and PM-macro-to-ticker translations so the macro PM signals from M2-03 have somewhere to land.
+Turn the M2-03 raw alert stream into a **machine-readable signal layer** that the M2-05 strategy engine can query: per-article scored sentiment + materiality, per-ticker rolling rollups, structured catalyst flags (scheduled + emerging), LLM-discovered theme tags (with operator review gate), PM-macro-to-ticker translations, and a **calendar layer** of scheduled market-moving events that get the same catalyst-flag treatment as news-derived ones.
 
-**In scope**: scoring, persistence, theme + catalyst extraction, PM→ticker mapping, the ticker-universe expansion required to make macro signals actionable, budget/cap guards.
+**In scope**: scoring, persistence, theme + catalyst extraction, PM→ticker mapping, the ticker-universe expansion required to make macro signals actionable, **scheduled-event calendar (Fed / CPI / NFP / PCE / earnings / FDA PDUFA / OPEC)**, budget/cap guards, and an upgraded alert-delivery model that respects a hard 4/day Telegram budget.
 
 **Out of scope** (downstream phases): the actual trade-decision engine (M2-05), risk gating (M2-06), execution (M2-07), and broader strategy backtesting against the signal (also M2-05).
 
@@ -63,6 +63,31 @@ Turn the M2-03 raw alert stream into a **machine-readable signal layer** that th
 - Scheduled catalysts (earnings, Fed, CPI, NFP) are pre-seeded from existing M2-03 calendar wiring. The LLM enriches them with magnitude + direction estimates as relevant news arrives.
 - Emerging catalysts (M&A rumors, lawsuit filings, FDA decisions, geopolitical escalations) come purely from LLM extraction on article scoring.
 - A catalyst with `expected_date < now` is auto-archived (still queryable for backtest, but flagged inactive).
+
+### Calendar Layer (added 2026-05-30)
+- **Pre-load the next 60 days of scheduled market-moving events** into the same data layer that catalyst-flag records use. Each calendar event is treated as a catalyst with a known date and a pre-LLM magnitude estimate; news arriving in the days before the event refines magnitude/direction.
+- Event types to seed (priority order):
+  - **Fed**: FOMC meetings, Powell speeches, FOMC minutes, Beige Book — drives discount-rate signal stream
+  - **Macro prints**: CPI, PPI, PCE, NFP, JOLTS, retail sales, ISM, GDP — drives both rate and broad equity reaction
+  - **Earnings**: per-ticker dates from earnings calendar for watchlist + macro-ETF underlyings (XLE constituents, XLF constituents, etc.) — drives single-name volatility
+  - **OPEC + EIA**: OPEC meetings + weekly EIA crude inventory — drives energy sector + crude
+  - **FDA PDUFA**: drug-decision dates for pharma watchlist tickers — drives single-name binary moves
+  - **Treasury auctions**: 10y / 30y auction dates — drives rates + risk premium
+- Data sources: FRED API (free, comprehensive macro), Earnings Whisper or Yahoo earnings calendar (free), FDA PDUFA list (manual seed + monthly refresh from public sources), OPEC schedule (manual seed annually).
+- Calendar records share the catalyst-flag shape: `{ type, ticker(s) or sector, expected_date, magnitude (1-5 pre-LLM estimate), direction ("up" / "down" / "uncertain" / "binary"), confidence, source ("calendar:fred" | "calendar:earnings" | etc.), first_seen_at }`.
+- News scoring runs the LLM on relevant articles in the days leading up to an event — the calendar entry's magnitude / direction / confidence get refined as news arrives ("rumored CPI hot at 3.2%, would push markets lower" raises magnitude on the upcoming CPI catalyst).
+- M2-05 queries: "show me catalysts in the next 7 days affecting my watchlist + macro ETFs, sorted by magnitude × proximity-decay."
+
+**Why this folds into M2-04 instead of being its own phase**: the catalyst-flag shape and persistence model are M2-04's anyway. Without calendar events, M2-04's catalyst output is half-built (only emerging news catalysts, no scheduled). Operator-stated themes (politics, fossil fuels, conflicts, AI) all have scheduled events as their primary drivers — Fed for politics/rates, OPEC + EIA for fuels, sanction deadlines for conflicts, earnings for AI single names.
+
+### Alert Delivery — 4/day Cap, Digest-First Model (added 2026-05-30)
+- **Operator constraint: at most 4 Telegram alerts per ET trading day.** This is hard. Counter rolls at ET midnight.
+- **Interim implementation (shipped 2026-05-30 ahead of M2-04)**: hard daily-cap counter in `IntelligenceAlerter` + within-cycle priority sort (`|pmMovePp| * log10(volume24hr) + confirmedBonus`) so the 4 slots go to the biggest signals. Cap state persisted in `alert-cooldown.json` alongside the per-market cooldown.
+- **M2-04 target model**: replace the bare hard-cap with a **scheduled-digest** delivery model that uses M2-04's per-article scoring for ranking:
+  - **3 scheduled digest slots**: morning brief (~8:30 ET pre-open), mid-day update (~12:30 ET), end-of-day (~3:30 ET pre-close). Each digest contains the top 1-2 stories from the elapsed window plus what's on the next 24h calendar.
+  - **1 break-glass slot** reserved per day for an extreme outlier: PM move ≥ 15pp, OR LLM-rated criticality ≥ 0.9, OR scheduled mega-catalyst (FOMC surprise, NFP miss, geopolitical shock) hitting in real time. Only fires if not already used; resets at ET midnight.
+  - All other proposed alerts are suppressed at the Telegram layer but **persisted with `suppressed: true`** in the audit log so M2-04 scoring + M2-05 strategy can still consume them.
+- Rationale: predictable rhythm matches how a swing trader actually consumes signal (morning prep → trade → end-of-day review). Real "alert me right now" events are rare; one reserved slot covers them.
 
 ### Claude's Discretion
 The user did not select "Translation & scope" to discuss explicitly, so the following are Claude's calls — to be revisited if planning reveals friction:

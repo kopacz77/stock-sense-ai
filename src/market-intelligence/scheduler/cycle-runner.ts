@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { IntelligenceAlerter } from "../alerts/intelligence-alerter.js";
+import { IntelligenceAlerter, alertPriority } from "../alerts/intelligence-alerter.js";
 import { HeadlinePmCorrelator } from "../correlator/headline-pm-correlator.js";
 import { LlmCorrelator } from "../correlator/llm-correlator.js";
 import { LlmCostTracker } from "../correlator/cost-tracker.js";
@@ -113,11 +113,15 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
     correlator = "rule-based";
   }
 
-  // 4. Dispatch
+  // 4. Dispatch — sort by priority so the daily cap is spent on the
+  //    biggest signals first within a cycle. Operator preference is at
+  //    most 4 Telegram pings per ET day, so ranking matters: a $6M Iran
+  //    market move beats a $300k threshold wiggle every time.
+  const rankedAlerts = [...alerts].sort((a, b) => alertPriority(b) - alertPriority(a));
   let alertsSent = 0;
-  if (!options.dryRun && alerts.length > 0) {
+  if (!options.dryRun && rankedAlerts.length > 0) {
     const alerter = new IntelligenceAlerter(dataDir);
-    for (const alert of alerts) {
+    for (const alert of rankedAlerts) {
       const ok = await alerter.send(alert);
       if (ok) alertsSent++;
     }
