@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
-| Current Phase | M2-04 LLM Trade-Signal Layer (in progress — 10-01 ✅; 10-04 ✅; 10-02/03/05/06/07 pending) |
-| Status | M2-04 Wave 2 progress: PmMappingEngine (Plan 10-04) landed with 8/8 unit tests green — turns -4pp Iran ceasefire move into +4 XLE contribution deterministically. Plan 10-05 RollupBuilder unblocked on the PM-contribution side. |
+| Current Phase | M2-04 LLM Trade-Signal Layer (in progress — 10-01 ✅; 10-02 ✅; 10-04 ✅; 10-03/05/06/07 pending) |
+| Status | M2-04 Wave 1+2 progress: ArticleScorer + ScoreBacklog (Plan 10-02) landed with 26/26 unit tests green — LM Studio call surface mirrors LlmCorrelator byte-for-byte (sequential gate empirically proven; concurrency>1 clamped to 1; on-failure throws so caller queues to backlog; bail-on-first-failure drain semantics). PmMappingEngine (Plan 10-04) landed earlier with 8/8 tests green. Plan 10-05 RollupBuilder unblocked on both PM-contribution and scored-article sides. |
 | Last Pivot | 2026-05-23 |
 | Last Updated | 2026-05-31 |
 
@@ -41,13 +41,13 @@
 
 ## Active Work
 
-**Current Focus**: M2-04 LLM Trade-Signal Layer in progress. Wave 1 plan 10-01 ✅. Plan 10-04 (PmMappingEngine) ✅. Wave 2 siblings 10-02 (LLM client) and 10-03 (ArticleScorer) appear to be in flight (untracked working files present: `src/market-intelligence/signal/article-scorer.ts`, `src/market-intelligence/signal/calendar/`).
+**Current Focus**: M2-04 LLM Trade-Signal Layer in progress. Wave 1 plan 10-01 ✅. Plan 10-02 (ArticleScorer + ScoreBacklog) ✅. Plan 10-04 (PmMappingEngine) ✅. Plan 10-03 (CalendarFetchers) appears to be in flight (untracked working dir `src/market-intelligence/signal/calendar/` and `.planning/phases/10-llm-trade-signal/10-03-treasury-spike.md` indicating an in-flight executor agent).
 
 **Blocking Issues**: None.
 
 **Next Actions**:
-1. Close out Wave 2 siblings 10-02 (LLM client) and 10-03 (ArticleScorer / CalendarFetchers) — both have untracked working files in `src/market-intelligence/signal/` indicating in-flight executor agents.
-2. Execute Wave 3 (10-05 RollupBuilder, 10-06 DigestBuilder, 10-07 review CLI) — RollupBuilder is now unblocked on PM contributions (Plan 10-04 landed) and will block on the Wave 2 scored-articles + calendar streams.
+1. Close out Plan 10-03 (CalendarFetchers) — untracked working files in `src/market-intelligence/signal/calendar/` indicate an in-flight executor.
+2. Execute Wave 3 (10-05 RollupBuilder, 10-06 DigestBuilder, 10-07 review CLI) — RollupBuilder is now unblocked on PM contributions (10-04 ✅) AND scored articles (10-02 ✅); only awaiting CalendarFetchers (10-03) for the active-catalyst join.
 3. Operator manual setup (deferred, not blockers): fill `config/fda-pdufa-seed.json` quarterly, `config/opec-schedule-seed.json` annually, add FRED key to encrypted config if calendar fetchers need it.
 
 **M2-05 scope grows** (carried over from M2-01 verdict): previous assumption was "layer AI on top of MomentumStrategy + MeanReversionStrategy". With both DISCARD'd, M2-05 must design fresh signals first (catalyst-driven entries from M2-04, volatility-breakout, sector-rotation rules). Plan M2-05 phase scoping when M2-04 is closer to done.
@@ -84,6 +84,7 @@
 | 2026-05-30 | **Phase M2-01 COMPLETE** | Acceptance: per CONTEXT.md success criterion 4 ("at least one strategy demonstrates Sharpe>0.5 and MaxDD<25% across all regimes — OR — both are formally rejected with documented evidence"), the second branch is satisfied. RECOMMENDATION.md documents both rejections with per-regime Sharpe / MaxDD / win-rate medians across the 35-ticker universe. Operator can now move forward with the M2-04 / M2-05 path. |
 | 2026-05-31 | Plan 10-01 | M2-04 foundation: 6 config JSON seeds in `config/` (themes×24, themes-rejected, macro-tickers×24, pm-market-mappings×3+proposed[], fda-pdufa-seed, opec-schedule-seed), shared types module `src/market-intelligence/signal/types.ts` (258 lines, 12 exports including 9 named contracts ScoredArticle / CatalystFlag / CalendarEvent / TickerDaySummary / ThemeCandidate / PmMapping / PmMappingProposal / DigestPayload / ScoreBacklogEntry), and `apis.fred?` added to ConfigSchema (commits c5a957d, 7c41a06). `pnpm tsc --noEmit` clean. Wave 2 plans (10-03/04/05) unblocked — they all import from this types module only, no cross-imports between Wave 2 modules. |
 | 2026-05-31 | Plan 10-04 | PmMappingEngine landed (commit 65a3144). `src/market-intelligence/signal/pm-mapping-engine.ts` (~230 lines) with `mapMarket()` / `mapMarkets()` / `invalidateCache()` / `mappingCount()`. Match precedence eventSlug → slugPrefix → questionContains, all populated criteria must match, all-null rules refuse to fire. Sign math as single 4-factor product `movePp × dirSign × weight × interpSign` — noPp inversion is a single ±1 flip. EXCLUSION_KEYWORDS bypass runs before mapping (sports/entertainment markets generate neither signals nor proposals). Unmatched markets persist as `PmMappingProposal` shell records with `proposedTickers: []` for the Plan 10-02 article scorer's LLM fallback to enrich. 8 vitest cases all green on first run, covering: Iran ceasefire noPp inversion (-4pp → +4 XLE), BTC slugPrefix, Fed multi-field, unmatched → proposal persist, EXCLUSION_KEYWORDS bypass, all-null refusal, multi-rule stacking, cache + invalidateCache reload. `pnpm tsc --noEmit` clean. Plan 10-05 RollupBuilder unblocked on the PM-contribution side. |
+| 2026-05-31 | Plan 10-02 | ArticleScorer + ScoreBacklog landed (commits 2ed987e, 4c0b2eb). `src/market-intelligence/signal/article-scorer.ts` (~530 lines) mirrors LlmCorrelator's LM Studio call surface byte-for-byte: OpenAI SDK with baseURL override, `apiKey: "lm-studio"` default, `timeout: 60_000`, `maxRetries: 0`, `/no_think` directive, `response_format` omitted (LM Studio rejects `"json_object"`). SCORER_VERSION="v1" + SYSTEM_PROMPT_V1 frozen. Sequential gate via `this.inFlight` promise chain — empirically proven serialized via maxConcurrent counter test (3 parallel calls without await between → maxConcurrent stays at 1). `concurrency > 1` clamped to 1 with console.warn (single-GPU saturation). On LLM failure throws — caller queues to backlog (no rule-based fallback substitution). `parseScorerResponse` tolerant of bare JSON, ```json fenced```, and leading-prose+JSON; clamps sentiment to [-1,1], materiality to [0,1], caps themes at 5, drops invalid catalysts. `fanOutScoredArticle` handles per-ticker, affected_tickers ∩ universe, and themed-only ticker="" cases. `src/market-intelligence/signal/score-backlog.ts` (~160 lines) — single-file rolling backlog at `data/intel/score-backlog.jsonl` with atomic temp-file-rename writes, FIFO drain ordering, maxN cap (default 50), bail-on-first-failure semantics. 26 vitest tests (18 article-scorer + 8 score-backlog), all green. Auto-fixed inline (Rule 2): SYSTEM_PROMPT_V1 catalyst-type list expanded from plan's 10 to types.ts's 22 — narrower prompt enum would have caused silent runtime drops of valid LLM-emitted catalysts (cpi/nfp/pce/jolts/ism/opec/etc). Plan 10-05 RollupBuilder now unblocked on the scored-article side. |
 
 ---
 
@@ -92,7 +93,7 @@
 | Metric | Current | Target |
 |--------|---------|--------|
 | M1 phases complete | 2/6 | (deferred) |
-| M2 phases complete | 2/7 (M2-04 in progress, 1/7 plans done) | 7/7 |
+| M2 phases complete | 2/7 (M2-04 in progress, 3/7 plans done) | 7/7 |
 | Live broker integrated | No | Yes (M2-02) |
 | News + AI layer | No | Yes (M2-03/04) |
 | Hard risk limits enforced at execution | No | Yes (M2-06) |
@@ -101,6 +102,33 @@
 ---
 
 ## Decisions
+
+### 2026-05-31: Plan 10-02 — ArticleScorer + ScoreBacklog (LM Studio Sibling with Sequential Gate and Bail-on-First-Failure Drain)
+
+**Decision**: Build `ArticleScorer` as a sibling to `LlmCorrelator` (not a fork or subclass), mirroring the LM Studio call surface byte-for-byte. Implement sequential-gate via promise chain (`this.inFlight` field) rather than a semaphore library. Build `ScoreBacklog` as a single-file rolling backlog with atomic temp-rename writes and bail-on-first-failure drain semantics.
+
+**Rationale**:
+- **Sibling pattern**: ArticleScorer and LlmCorrelator have different responsibilities (per-article scoring vs market-headline correlation) but identical infrastructure needs (OpenAI SDK with baseURL override, `apiKey: "lm-studio"` default, `timeout: 60_000`, `maxRetries: 0`, `/no_think`, `response_format` omitted). Forking would couple them; subclassing would force shared base-class evolution. Sibling means copy the constructor pattern verbatim and let each module own its prompt + parser. New modules under `src/market-intelligence/` needing LM Studio should follow this pattern.
+- **Promise-chain sequential gate** (vs `p-limit` library): zero dependency cost, naturally FIFO, O(1) per-call overhead (one promise allocation), trivially testable. The proof-of-correctness test (maxConcurrent counter inside fake client, 3 parallel calls without await between) is 30 lines and is the kind of empirical demonstration that catches regressions when the gate is later "optimized".
+- **`concurrency > 1` clamped to 1 with warn** (not rejected): operator who sets it to 4 isn't trying to break things, they just don't know the constraint. Warn loudly, clamp silently, keep the pipeline running.
+- **Throw on failure, no rule-based fallback**: Plan 10-06's cycle-runner will catch the throw and enqueue to `ScoreBacklog`. If we silently substituted a rule-based score (the M2-03 correlator pattern), downstream rollups would see records shaped exactly like LLM-scored records but with different distributional properties — exactly the kind of bug that wouldn't surface until M2-05 strategies started reading the data.
+- **Atomic temp-rename writes**: a process kill mid-drain (Ctrl+C, OS reap, WSL2 sleep) on a non-atomic append would leave the backlog with a half-written line that breaks the JSON parser on reload. Temp-rename is one extra syscall per write — cheap insurance.
+- **Bail-on-first-failure drain**: LM Studio outage is a binary state. If call N+1 fails with connection-refused or timeout, call N+2 within seconds will almost certainly fail the same way. Burning all 50 backlog slots × 60s = 50 minutes of wall time on guaranteed failures is wasteful — bail and let the next cycle's heartbeat retry from the same FIFO head. The `failed` counter in `DrainResult` is always 0 or 1 by construction; operator dashboards read it as "did the LLM come back?".
+- **SCORER_VERSION="v1"** captures both prompt and output schema together. Bump rules in 10-02-SUMMARY.md "What triggers a bump" section. Future stability test (`intel stability-test`) uses this to identify which rows need re-scoring after a prompt change rather than blanket re-scoring everything.
+- **Themed-only fallback (`ticker=""`)**: when an article has no scope and no LLM-proposed-ticker matches the universe, emit one row with `ticker=""` instead of dropping. M2-05 may query by theme even without ticker dimension — losing the article entirely would erase the theme signal.
+- **PM proposals + affected_tickers populated only on FIRST record** in a multi-ticker fan-out. They're article-level metadata, not per-ticker. Replicating across fan-out would cause double-counting in Plan 10-06's RollupBuilder.
+
+**Auto-fixed inline (Rule 2 — missing critical functionality)**:
+- **SYSTEM_PROMPT_V1 catalyst-type enum expanded from plan's 10 to types.ts's 22**: the plan-level prompt enumerated `"earnings", "guidance", "ma", "regulatory", "fda", "macro_print", "fomc", "geopolitical", "lawsuit", "product", "other"` (10 types), but `signal/types.ts` `CatalystType` union declares 22 (adds `fda_pdufa`, `cpi`, `nfp`, `pce`, `retail_sales`, `jolts`, `gdp`, `ism`, `opec`, `eia_petroleum`, `treasury_auction`). If the prompt told the LLM only the smaller set, the scorer's runtime validation (`VALID_CATALYST_TYPES.has(...)`) would silently drop any LLM-emitted catalyst of the fine-grained types that the calendar fetchers (Plan 10-03) and rollup builder (Plan 10-05) actually need to refine. Fix: SYSTEM_PROMPT_V1 now enumerates the full 22-type union, matching the type contract.
+
+**Verification**: 18/18 ArticleScorer tests + 8/8 ScoreBacklog tests + 8/8 PmMappingEngine tests (concurrent Wave 2 work, untouched here) = 34/34 signal-module tests pass. `pnpm tsc --noEmit` exits 0. Sequential gate proven via maxConcurrent counter test (3 parallel calls → maxConcurrent stays at 1). Bail-on-first-failure proven via test enqueueing 10 articles, throwing on call #2 → 1 scored + 1 failed + 9 remaining + only 2 total calls made. Backlog round-trip across fresh ScoreBacklog instances proves cold-load works (cache not assumed).
+
+**Carry-over for Plan 10-06 (cycle-runner integration)**:
+- Construct ArticleScorer with the same env vars LlmCorrelator uses (`LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY`).
+- `ScoringContext` requires the caller to assemble: `canonicalThemes` (from `config/themes.json`), `upcomingEvents` (from catalyst-flags stream, next 14 days), `tickerUniverse` (from `watchlist.txt ∪ config/macro-tickers.json`), `pmContext` (optional, from today's polymarket-snapshots).
+- On scorer throw: `await backlog.enqueue(article, pmContext, err.message)`. Do NOT silently substitute a rule-based score.
+- AT END of cycle (after fresh-article scoring): `await backlog.drain(scorer, ctx, 50)` — drain LAST per RESEARCH pitfall #5 so backlog doesn't starve fresh signal.
+- Scheduler state should gain `backlogSize` + `backlogOldestAt` for operator visibility.
 
 ### 2026-05-31: Plan 10-04 — PmMappingEngine (Table-Driven PM-to-Ticker Signals with noPp Inversion)
 
@@ -329,4 +357,4 @@
 
 ---
 
-*Last updated: 2026-05-31 — Plan 10-04 complete; PmMappingEngine landed (commit 65a3144) with 8/8 unit tests green. Iran ceasefire canonical noPp inversion verified end-to-end (-4pp Yes drop → +4 bullish XLE). `pnpm tsc --noEmit` clean. Plan 10-05 RollupBuilder unblocked on the PM-contribution side. Wave 2 siblings 10-02 + 10-03 in flight (untracked working files present in `src/market-intelligence/signal/`).*
+*Last updated: 2026-05-31 — Plan 10-02 complete; ArticleScorer + ScoreBacklog landed (commits 2ed987e, 4c0b2eb) with 26/26 unit tests green. LM Studio call surface mirrors LlmCorrelator byte-for-byte (sequential gate empirically proven via maxConcurrent=1 across 3 parallel calls; bail-on-first-failure drain proven via 1-success-then-throw → only 2 calls made). `pnpm tsc --noEmit` clean. Plan 10-05 RollupBuilder unblocked on both PM-contribution (10-04) and scored-article (10-02) sides. Plan 10-03 (CalendarFetchers) still in flight — untracked working dir `src/market-intelligence/signal/calendar/` indicates an in-flight executor.*
