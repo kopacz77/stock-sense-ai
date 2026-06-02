@@ -1,7 +1,15 @@
 # Phase M2-05: AI-Augmented Strategy Engine - Context
 
 **Gathered:** 2026-06-02
-**Status:** Ready for planning
+**Status:** ⏸ DEFERRED until 2026-07-02 (30-day M2-04 data accumulation)
+**Reason for defer:** M2-04 substrate code is complete but the running scheduler is on pre-M2-04 code, so no historical scored-articles / rollup / catalyst data exists. Backtest validation (CONTEXT-locked: Sharpe > 0.5 + MaxDD < 25% per regime) can't be honestly satisfied without real historical M2-04 outputs to test against. Operator decision 2026-06-02: wait the 30 days, then build M2-05 with real data to validate. Re-enter `/gsd:plan-phase 11` once `data/intel/scored-articles-*.jsonl` and `ticker-day-summary-*.jsonl` cover at least 25 trading days.
+
+**Re-entry checklist:**
+1. Confirm scheduler is running M2-04 code (cycle-runner.ts includes steps 3.5-3.9)
+2. Verify `data/intel/scored-articles-*.jsonl` exists for ≥25 trading days
+3. Verify `data/intel/ticker-day-summary-*.jsonl` exists for same window
+4. Verify `data/intel/calendar-*.jsonl` has been refreshed at least weekly
+5. Then resume `/gsd:plan-phase 11` — the decisions below are still valid; only the backtest acceptance criterion changes (now uses real M2-04 history)
 
 <domain>
 ## Phase Boundary

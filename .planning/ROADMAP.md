@@ -251,7 +251,10 @@ M2-07: Live Execution + Tax Tracking
 
 ### Phase M2-05: AI-Augmented Strategy Engine
 
-**Directory**: `.planning/phases/11-ai-strategy/` (to be created)
+**Directory**: `.planning/phases/11-ai-strategy/`
+**Status**: ⏸ **DEFERRED to ~2026-07-02** (operator decision 2026-06-02). CONTEXT.md is captured — re-enter `/gsd:plan-phase 11` after 30 days of live M2-04 data exist. Re-entry checklist at top of CONTEXT.md.
+
+**Why deferred**: M2-04 substrate code is complete (commits 89430fc / a68498c) but the live scheduler was started 2026-05-30 and hasn't picked up M2-04 yet — and even after restart, M2-04 outputs only go forward from today. The CONTEXT-locked backtest validation (Sharpe > 0.5 + MaxDD < 25% per regime) needs real historical scored-articles / rollups to test against. Operator chose the rigorous path: collect 30 days of live data, then build M2-05 with real evidence rather than test-fixture data.
 
 **Goal**: Combine technical signals (from M2-01 winners) + LLM analysis (from M2-04) + volatility regime (from M2-03) into a single decision engine that produces *prioritized* candidate signals rather than raw buy/sell.
 

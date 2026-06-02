@@ -33,7 +33,7 @@
 | M2-02 | Alpaca Paper Integration | pending | — | — |
 | M2-03 | Market Intelligence Bot | ✅ COMPLETE | 2026-05-23 | 2026-05-28 |
 | M2-04 | LLM Trade-Signal Layer | ✅ COMPLETE | 2026-05-31 | 2026-05-31 |
-| M2-05 | AI-Augmented Strategy Engine | pending | — | — |
+| M2-05 | AI-Augmented Strategy Engine | ⏸ DEFERRED to ~2026-07-02 (30-day M2-04 data accumulation) | — | — |
 | M2-06 | Hard Risk Management | pending | — | — |
 | M2-07 | Live Execution + Tax Tracking | pending | — | — |
 
@@ -41,7 +41,7 @@
 
 ## Active Work
 
-**Current Focus**: **M2-04 phase ✅ COMPLETE — 7/7 plans landed.** Full LLM Trade-Signal Layer is live: scoring (3.5) → PM mapping (3.6) → catalyst refine (3.7) → 24h-guarded calendar refresh (3.8) → rollup build (3.9) → break-glass evaluation (3.95) → dispatch (4). Operator-facing surface: 7 `intel` CLI subcommands + 3 scheduled Telegram digests + break-glass slot. Next focus is M2-05 (AI-Augmented Strategy Engine — scope grew per M2-01 verdict; must design fresh catalyst-driven / vol-breakout / sector-rotation signals before any AI layering).
+**Current Focus**: **M2-05 deferred 30 days** (operator decision 2026-06-02). Backtest validation requires real M2-04 historical data that doesn't exist yet — scheduler is on pre-M2-04 code and even after restart, only goes forward. CONTEXT.md captured at `.planning/phases/11-ai-strategy/11-CONTEXT.md`; re-entry checklist at top of that file. Parallel-able work during the 30-day incubation: **(1) restart scheduler so M2-04 starts producing real data** [immediate / one-line operator action] and **(2) ship M2-02 (Alpaca Paper Integration)** [4-6 days, independent of M2-04 data, unblocks execution rail].
 
 **Blocking Issues**: None.
 
