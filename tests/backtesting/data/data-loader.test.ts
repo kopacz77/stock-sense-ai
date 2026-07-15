@@ -169,4 +169,131 @@ describe("CSVDataLoader", () => {
   it("should require basePath in config", () => {
     expect(() => new CSVDataLoader({ type: "CSV" })).toThrow();
   });
+
+  // These exercise the real (working) validation logic shared with MemoryDataLoader.
+  // See the BUG note above: MemoryDataLoader.validate cannot reach this code because
+  // it constructs a CSVDataLoader with an empty basePath.
+  describe("validate", () => {
+    let loader: CSVDataLoader;
+
+    beforeEach(() => {
+      loader = new CSVDataLoader({ type: "CSV", basePath: "/tmp" });
+    });
+
+    it("should validate correct OHLCV data", () => {
+      const validData: HistoricalDataPoint[] = [
+        {
+          symbol: "AAPL",
+          timestamp: new Date("2024-01-01"),
+          open: 100,
+          high: 105,
+          low: 95,
+          close: 102,
+          volume: 1000000,
+        },
+        {
+          symbol: "AAPL",
+          timestamp: new Date("2024-01-02"),
+          open: 102,
+          high: 107,
+          low: 100,
+          close: 105,
+          volume: 1100000,
+        },
+      ];
+
+      const result = loader.validate(validData);
+
+      expect(result.isValid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+      expect(result.quality.totalPoints).toBe(2);
+      expect(result.quality.symbols).toContain("AAPL");
+    });
+
+    it("should reject empty data", () => {
+      const result = loader.validate([]);
+
+      expect(result.isValid).toBe(false);
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(result.quality.totalPoints).toBe(0);
+    });
+
+    it("should detect negative prices", () => {
+      const invalidData: HistoricalDataPoint[] = [
+        {
+          symbol: "TEST",
+          timestamp: new Date("2024-01-01"),
+          open: -100, // Invalid: negative price
+          high: 105,
+          low: 95,
+          close: 102,
+          volume: 1000000,
+        },
+      ];
+
+      const result = loader.validate(invalidData);
+
+      expect(result.isValid).toBe(false);
+      expect(result.errors.some((e) => /positive/.test(e))).toBe(true);
+    });
+
+    it("should detect OHLC inconsistency when high < low", () => {
+      const invalidData: HistoricalDataPoint[] = [
+        {
+          symbol: "TEST",
+          timestamp: new Date("2024-01-01"),
+          open: 100,
+          high: 90, // Invalid: high < low
+          low: 95,
+          close: 92,
+          volume: 1000000,
+        },
+      ];
+
+      const result = loader.validate(invalidData);
+
+      expect(result.isValid).toBe(false);
+      expect(result.errors.some((e) => /high cannot be less than low/.test(e))).toBe(true);
+    });
+
+    it("should detect negative volume", () => {
+      const invalidData: HistoricalDataPoint[] = [
+        {
+          symbol: "TEST",
+          timestamp: new Date("2024-01-01"),
+          open: 100,
+          high: 105,
+          low: 95,
+          close: 102,
+          volume: -500, // Invalid: negative volume
+        },
+      ];
+
+      const result = loader.validate(invalidData);
+
+      expect(result.isValid).toBe(false);
+      expect(result.errors.some((e) => /volume cannot be negative/.test(e))).toBe(true);
+    });
+
+    it("should warn (not error) on high below open/close", () => {
+      // high >= low so no error, but high < close triggers a warning only
+      const data: HistoricalDataPoint[] = [
+        {
+          symbol: "TEST",
+          timestamp: new Date("2024-01-01"),
+          open: 100,
+          high: 101,
+          low: 99,
+          close: 105, // close above high -> warning, not error
+          volume: 1000,
+        },
+      ];
+
+      const result = loader.validate(data);
+
+      expect(result.isValid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+      expect(result.warnings.length).toBeGreaterThan(0);
+    });
+  });
 });

@@ -143,6 +143,11 @@ export class PerformanceMetricsCalculator {
       avgHoldingPeriod,
       maxConsecutiveWins,
       maxConsecutiveLosses,
+
+      // Cost Analysis
+      totalCommissions,
+      totalSlippage,
+      totalCosts: totalCommissions + totalSlippage,
     };
   }
 

@@ -1,6 +1,17 @@
 /**
  * Performance Metrics Tests
- * CRITICAL: Tests all 30+ metric calculations for accuracy
+ * Exercises the real PerformanceMetricsCalculator.calculate() API.
+ *
+ * Field-usage notes (see src/backtesting/analytics/performance-metrics.ts):
+ *  - finalEquity / totalReturn / drawdowns read `point.equity`
+ *  - volatility / sharpe / sortino read `point.returns` (undefined values filtered out)
+ *  - drawdown dates read `point.date ?? point.timestamp`
+ *  - CAGR / trading days derive from the startDate/endDate PARAMS, not equity dates
+ *  - win/loss classification, avg/largest win-loss, profit factor, payoff, expectancy,
+ *    and streaks all read `trade.pnl`; percent variants read `trade.pnlPercent`;
+ *    holding period reads `trade.holdingPeriod`
+ *  - IMPORTANT: calculate() early-returns getEmptyMetrics() when equityCurve.length === 0,
+ *    so any test asserting TRADE stats must supply a non-empty equity curve.
  */
 
 import { describe, it, expect } from "vitest";
@@ -15,37 +26,39 @@ describe("PerformanceMetricsCalculator", () => {
   describe("Return Metrics", () => {
     it("should calculate total return correctly", () => {
       const equityCurve: EquityCurvePoint[] = [
-        { date: startDate, equity: 100000, cash: 100000, marketValue: 0, returns: 0, cumulativeReturns: 0 },
-        { date: endDate, equity: 120000, cash: 120000, marketValue: 0, returns: 0, cumulativeReturns: 20 }
+        eqPoint(startDate, 100000),
+        eqPoint(endDate, 120000),
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
         equityCurve, [], initialCapital, startDate, endDate, 0, 0
       );
 
-      expect(metrics.totalReturn).toBeCloseTo(20, 2); // 20% return
+      // (120000 - 100000) / 100000 * 100 = 20
+      expect(metrics.totalReturn).toBeCloseTo(20, 2);
       expect(metrics.totalReturnDollar).toBeCloseTo(20000, 2);
     });
 
     it("should calculate CAGR correctly for multi-year period", () => {
       const threeYearsLater = new Date("2027-01-01");
       const equityCurve: EquityCurvePoint[] = [
-        { date: startDate, equity: 100000, cash: 100000, marketValue: 0, returns: 0, cumulativeReturns: 0 },
-        { date: threeYearsLater, equity: 133100, cash: 133100, marketValue: 0, returns: 0, cumulativeReturns: 33.1 }
+        eqPoint(startDate, 100000),
+        eqPoint(threeYearsLater, 133100),
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
         equityCurve, [], initialCapital, startDate, threeYearsLater, 0, 0
       );
 
-      // CAGR = (133100/100000)^(1/3) - 1 = 10% annual
+      // 1096 calendar days -> 756 trading days -> 3.0 years.
+      // CAGR = (133100/100000)^(1/3) - 1 = 1.1 - 1 = 10%
       expect(metrics.cagr).toBeCloseTo(10, 1);
     });
 
     it("should handle negative returns", () => {
       const equityCurve: EquityCurvePoint[] = [
-        { date: startDate, equity: 100000, cash: 100000, marketValue: 0, returns: 0, cumulativeReturns: 0 },
-        { date: endDate, equity: 80000, cash: 80000, marketValue: 0, returns: 0, cumulativeReturns: -20 }
+        eqPoint(startDate, 100000),
+        eqPoint(endDate, 80000),
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
@@ -58,146 +71,108 @@ describe("PerformanceMetricsCalculator", () => {
   });
 
   describe("Risk Metrics", () => {
-    it("should calculate volatility correctly", () => {
-      // Create equity curve with known volatility
-      const equityCurve: EquityCurvePoint[] = [];
-      const returns = [1, -1, 2, -2, 1.5, -1.5]; // Daily returns %
-
-      for (let i = 0; i < returns.length; i++) {
-        const date = new Date(startDate);
-        date.setDate(date.getDate() + i);
-
-        equityCurve.push({
-          date,
-          equity: initialCapital * (1 + returns[i]! / 100),
-          cash: 0,
-          marketValue: 0,
-          returns: returns[i]!,
-          cumulativeReturns: 0
-        });
-      }
+    it("should calculate annualized volatility correctly", () => {
+      const returns = [1, -1, 2, -2, 1.5, -1.5]; // daily returns %
+      const equityCurve = returnsToEquityCurve(returns);
 
       const metrics = PerformanceMetricsCalculator.calculate(
         equityCurve, [], initialCapital, startDate, endDate, 0, 0
       );
 
+      // mean = 0; sample variance = 14.5/(6-1) = 2.9; dailyVol = sqrt(2.9) = 1.702938...
+      // annualized = dailyVol * sqrt(252) = 27.0333...
       expect(metrics.volatility).toBeGreaterThan(0);
-      // Volatility should be annualized (daily vol * sqrt(252))
+      expect(metrics.volatility).toBeCloseTo(27.03, 1);
     });
 
     it("should calculate Sharpe ratio correctly", () => {
-      const equityCurve: EquityCurvePoint[] = [];
-      const returns = [1, 1, 1, 1, 1]; // Consistent 1% daily returns
-
-      for (let i = 0; i < returns.length; i++) {
-        const date = new Date(startDate);
-        date.setDate(date.getDate() + i);
-
-        equityCurve.push({
-          date,
-          equity: initialCapital * (1 + returns[i]! / 100),
-          cash: 0,
-          marketValue: 0,
-          returns: returns[i]!,
-          cumulativeReturns: 0
-        });
-      }
+      // Varying POSITIVE returns -> non-zero variance -> genuinely positive Sharpe.
+      const returns = [1, 0.5, 1.5, 0.8, 1.2]; // daily returns %
+      const equityCurve = returnsToEquityCurve(returns);
 
       const metrics = PerformanceMetricsCalculator.calculate(
         equityCurve, [], initialCapital, startDate, endDate, 0, 0
       );
 
-      // High consistent returns should give high Sharpe
+      // mean = 1.0; annualizedReturn = 252
+      // sample variance = 0.58/4 = 0.145; dailyVol = 0.380789; annualVol = 6.044622
+      // Sharpe = 252 / 6.044622 = 41.6905
       expect(metrics.sharpeRatio).toBeGreaterThan(0);
+      expect(metrics.sharpeRatio).toBeCloseTo(41.69, 1);
     });
 
     it("should calculate Sortino ratio (downside deviation only)", () => {
-      const equityCurve: EquityCurvePoint[] = [];
-      const returns = [2, -1, 3, -1, 2]; // Mixed returns
-
-      for (let i = 0; i < returns.length; i++) {
-        const date = new Date(startDate);
-        date.setDate(date.getDate() + i);
-
-        equityCurve.push({
-          date,
-          equity: initialCapital,
-          cash: 0,
-          marketValue: 0,
-          returns: returns[i]!,
-          cumulativeReturns: 0
-        });
-      }
+      const returns = [2, -1, 3, -1, 2]; // mixed returns %
+      const equityCurve = returnsToEquityCurve(returns);
 
       const metrics = PerformanceMetricsCalculator.calculate(
         equityCurve, [], initialCapital, startDate, endDate, 0, 0
       );
 
-      // Sortino should be defined (may be 0 for minimal data)
-      expect(typeof metrics.sortinoRatio).toBe("number");
+      // mean = 1.0; annualizedReturn = 252
+      // downside returns = [-1, -1]; downsideVariance = 2/2 = 1; downsideDev = 1
+      // annualizedDownsideDev = 1 * sqrt(252) = 15.8745
+      // Sortino = 252 / 15.8745 = 15.8745
+      expect(metrics.sortinoRatio).toBeGreaterThan(0);
+      expect(metrics.sortinoRatio).toBeCloseTo(15.87, 1);
     });
   });
 
   describe("Drawdown Metrics", () => {
     it("should calculate maximum drawdown correctly", () => {
       const equityCurve: EquityCurvePoint[] = [
-        { date: new Date("2024-01-01"), equity: 100000, cash: 0, marketValue: 0, returns: 0, cumulativeReturns: 0 },
-        { date: new Date("2024-01-02"), equity: 110000, cash: 0, marketValue: 0, returns: 10, cumulativeReturns: 10 },
-        { date: new Date("2024-01-03"), equity: 90000, cash: 0, marketValue: 0, returns: -18.18, cumulativeReturns: -10 },
-        { date: new Date("2024-01-04"), equity: 95000, cash: 0, marketValue: 0, returns: 5.56, cumulativeReturns: -5 },
+        eqPoint(new Date("2024-01-01"), 100000),
+        eqPoint(new Date("2024-01-02"), 110000),
+        eqPoint(new Date("2024-01-03"), 90000),
+        eqPoint(new Date("2024-01-04"), 95000),
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
         equityCurve, [], initialCapital, startDate, endDate, 0, 0
       );
 
-      // Max DD = (90000 - 110000) / 110000 = -18.18%
+      // Peak 110000, trough 90000 -> (90000 - 110000) / 110000 * 100 = -18.1818%
       expect(metrics.maxDrawdown).toBeCloseTo(-18.18, 1);
     });
 
     it("should calculate drawdown duration", () => {
       const equityCurve: EquityCurvePoint[] = [];
 
-      // Create a drawdown lasting 10 days
+      // Peak established at day 0 (100000) and never exceeded thereafter,
+      // so drawdown duration grows until the final point (day 19).
       for (let i = 0; i < 20; i++) {
         const date = new Date(startDate);
         date.setDate(date.getDate() + i);
 
         let equity = initialCapital;
         if (i >= 5 && i < 15) {
-          equity = initialCapital * 0.9; // 10% drawdown
+          equity = initialCapital * 0.9; // 10% drawdown window
         }
 
-        equityCurve.push({
-          date,
-          equity,
-          cash: 0,
-          marketValue: 0,
-          returns: 0,
-          cumulativeReturns: 0
-        });
+        equityCurve.push(eqPoint(date, equity));
       }
 
       const metrics = PerformanceMetricsCalculator.calculate(
         equityCurve, [], initialCapital, startDate, endDate, 0, 0
       );
 
-      expect(metrics.maxDrawdownDuration).toBeGreaterThanOrEqual(0);
+      // Max duration = day19 - day0 = 19 days
+      expect(metrics.maxDrawdownDuration).toBe(19);
     });
 
     it("should calculate Calmar ratio (CAGR / Max DD)", () => {
       const equityCurve: EquityCurvePoint[] = [
-        { date: startDate, equity: 100000, cash: 0, marketValue: 0, returns: 0, cumulativeReturns: 0 },
-        { date: new Date("2024-06-01"), equity: 80000, cash: 0, marketValue: 0, returns: -20, cumulativeReturns: -20 },
-        { date: endDate, equity: 120000, cash: 0, marketValue: 0, returns: 50, cumulativeReturns: 20 },
+        eqPoint(startDate, 100000),
+        eqPoint(new Date("2024-06-01"), 80000),
+        eqPoint(endDate, 120000),
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
         equityCurve, [], initialCapital, startDate, endDate, 0, 0
       );
 
-      // Calmar = CAGR / |Max DD|
-      expect(metrics.calmarRatio).toBeGreaterThan(0);
+      // 1 year -> CAGR = 20%; Max DD = -20% -> Calmar = 20 / 20 = 1.0
+      expect(metrics.calmarRatio).toBeCloseTo(1.0, 2);
       expect(metrics.calmarRatio).toBe(metrics.cagr / Math.abs(metrics.maxDrawdown));
     });
   });
@@ -213,7 +188,7 @@ describe("PerformanceMetricsCalculator", () => {
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
       expect(metrics.totalTrades).toBe(5);
@@ -231,10 +206,10 @@ describe("PerformanceMetricsCalculator", () => {
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
-      expect(metrics.avgWin).toBe(1500); // (1000 + 2000) / 2
+      expect(metrics.avgWin).toBe(1500);  // (1000 + 2000) / 2
       expect(metrics.avgLoss).toBe(-750); // (-500 + -1000) / 2
     });
 
@@ -247,7 +222,7 @@ describe("PerformanceMetricsCalculator", () => {
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
       expect(metrics.largestWin).toBe(3000);
@@ -258,15 +233,15 @@ describe("PerformanceMetricsCalculator", () => {
       const trades: Trade[] = [
         createTrade(1000),  // Win 1
         createTrade(1000),  // Win 2
-        createTrade(1000),  // Win 3 (max streak)
+        createTrade(1000),  // Win 3 (max win streak)
         createTrade(-500),  // Loss 1
-        createTrade(500),   // Win
-        createTrade(-300),  // Loss 2
-        createTrade(-200),  // Loss 2 (max streak)
+        createTrade(500),   // Win (resets loss streak)
+        createTrade(-300),  // Loss 1
+        createTrade(-200),  // Loss 2 (max loss streak)
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
       expect(metrics.maxConsecutiveWins).toBe(3);
@@ -284,10 +259,10 @@ describe("PerformanceMetricsCalculator", () => {
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
-      // Profit factor = 5000 / 1500 = 3.33
+      // Profit factor = 5000 / 1500 = 3.3333
       expect(metrics.profitFactor).toBeCloseTo(3.33, 2);
     });
 
@@ -300,10 +275,10 @@ describe("PerformanceMetricsCalculator", () => {
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
-      // Payoff ratio = 3000 / 1000 = 3.0
+      // Payoff ratio = 3000 / |−1000| = 3.0
       expect(metrics.payoffRatio).toBeCloseTo(3.0, 1);
     });
 
@@ -316,7 +291,7 @@ describe("PerformanceMetricsCalculator", () => {
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
       // Expectancy = (1000 - 500 + 2000 - 300) / 4 = 550
@@ -327,7 +302,7 @@ describe("PerformanceMetricsCalculator", () => {
   describe("Cost Analysis", () => {
     it("should track total commissions and slippage", () => {
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], [], initialCapital, startDate, endDate, 150, 50
+        [eqPoint(startDate, initialCapital)], [], initialCapital, startDate, endDate, 150, 50
       );
 
       expect(metrics.totalCommissions).toBe(150);
@@ -355,12 +330,12 @@ describe("PerformanceMetricsCalculator", () => {
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
       expect(metrics.winRate).toBe(100);
       expect(metrics.losingTrades).toBe(0);
-      expect(metrics.profitFactor).toBe(0); // No losses to divide by
+      expect(metrics.profitFactor).toBe(0); // grossLoss === 0 -> guarded to 0
     });
 
     it("should handle all losing trades", () => {
@@ -371,7 +346,7 @@ describe("PerformanceMetricsCalculator", () => {
       ];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
       expect(metrics.winRate).toBe(0);
@@ -382,7 +357,7 @@ describe("PerformanceMetricsCalculator", () => {
       const trades: Trade[] = [createTrade(1000)];
 
       const metrics = PerformanceMetricsCalculator.calculate(
-        [], trades, initialCapital, startDate, endDate, 0, 0
+        equityCurveFromTrades(trades), trades, initialCapital, startDate, endDate, 0, 0
       );
 
       expect(metrics.totalTrades).toBe(1);
@@ -394,22 +369,76 @@ describe("PerformanceMetricsCalculator", () => {
   describe("Drawdown Calculation Utility", () => {
     it("should calculate drawdowns for equity curve", () => {
       const equityCurve: EquityCurvePoint[] = [
-        { date: new Date("2024-01-01"), equity: 100000, cash: 0, marketValue: 0, returns: 0, cumulativeReturns: 0 },
-        { date: new Date("2024-01-02"), equity: 110000, cash: 0, marketValue: 0, returns: 10, cumulativeReturns: 10 },
-        { date: new Date("2024-01-03"), equity: 105000, cash: 0, marketValue: 0, returns: -4.5, cumulativeReturns: 5 },
+        eqPoint(new Date("2024-01-01"), 100000),
+        eqPoint(new Date("2024-01-02"), 110000),
+        eqPoint(new Date("2024-01-03"), 105000),
       ];
 
       const drawdowns = PerformanceMetricsCalculator.calculateDrawdowns(equityCurve);
 
       expect(drawdowns.length).toBe(3);
-      expect(drawdowns[0]!.drawdown).toBe(0);
-      expect(drawdowns[1]!.drawdown).toBe(0); // New peak
-      expect(drawdowns[2]!.drawdown).toBeLessThan(0); // In drawdown
+      expect(drawdowns[0]!.drawdown).toBe(0);        // at initial peak
+      expect(drawdowns[1]!.drawdown).toBe(0);        // new peak
+      // (105000 - 110000) / 110000 * 100 = -4.5454...
+      expect(drawdowns[2]!.drawdown).toBeCloseTo(-4.55, 1);
+      expect(drawdowns[2]!.drawdown).toBeLessThan(0);
     });
   });
 });
 
-// Helper function to create test trade
+/**
+ * Build a fully-typed EquityCurvePoint. The calculator only reads `equity`,
+ * `returns`, and `date ?? timestamp`; the remaining fields are required by the
+ * type and populated with consistent placeholder values.
+ */
+function eqPoint(date: Date, equity: number, returns?: number): EquityCurvePoint {
+  return {
+    timestamp: date,
+    date,
+    equity,
+    cash: equity,
+    positionsValue: 0,
+    marketValue: 0,
+    cumulativeReturn: 0,
+    cumulativeReturns: 0,
+    returns,
+    dailyReturn: returns ?? 0,
+    drawdown: 0,
+  };
+}
+
+/**
+ * Turn an array of daily percent returns into a dated equity curve, populating
+ * the `returns` field the risk metrics read.
+ */
+function returnsToEquityCurve(returns: number[]): EquityCurvePoint[] {
+  const start = new Date("2024-01-01");
+  return returns.map((r, i) => {
+    const date = new Date(start);
+    date.setDate(date.getDate() + i);
+    return eqPoint(date, 100000 * (1 + r / 100), r);
+  });
+}
+
+/**
+ * Build a minimal non-empty equity curve consistent with a set of trades so the
+ * early empty-curve guard does not fire and trade-stat assertions are reachable.
+ */
+function equityCurveFromTrades(trades: Trade[]): EquityCurvePoint[] {
+  const start = new Date("2024-01-01");
+  let equity = 100000;
+  const points: EquityCurvePoint[] = [eqPoint(start, equity)];
+  trades.forEach((t, i) => {
+    equity += t.pnl;
+    const date = new Date(start);
+    date.setDate(date.getDate() + i + 1);
+    points.push(eqPoint(date, equity));
+  });
+  return points;
+}
+
+// Helper function to create a test trade. Populates the exact fields the
+// calculator reads: `pnl`, `pnlPercent`, `holdingPeriod`.
 function createTrade(pnl: number): Trade {
   return {
     id: `trade-${Math.random()}`,
@@ -421,13 +450,13 @@ function createTrade(pnl: number): Trade {
     quantity: 100,
     side: "BUY",
     pnl,
-    pnlPercent: pnl / 10000 * 100,
+    pnlPercent: (pnl / 10000) * 100,
     commission: 0,
     slippage: 0,
     totalCost: 0,
     netPnl: pnl,
     holdingPeriod: 1,
     strategyName: "TEST",
-    exitReason: "STRATEGY_EXIT"
+    exitReason: "STRATEGY_EXIT",
   };
 }

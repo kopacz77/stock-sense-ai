@@ -84,7 +84,7 @@ export class DigestBuilder {
 
     // 1) Top stories from scored articles in window
     const scored = await this.loadScoredSince(windowStart, now);
-    const topStories = await this.pickTopStories(scored, 2);
+    const topStories = await this.pickTopStories(scored, 2, now);
 
     // 2) Upcoming calendar (24h)
     const upcomingCalendar = await this.loadUpcomingCalendar(now, 24);
@@ -125,6 +125,7 @@ export class DigestBuilder {
   private async pickTopStories(
     scored: ScoredArticle[],
     n: number,
+    now: Date,
   ): Promise<DigestPayload["topStories"]> {
     if (scored.length === 0) return [];
 
@@ -151,7 +152,7 @@ export class DigestBuilder {
     const top = ranked.slice(0, n);
 
     // Join with news-*.jsonl to recover headline/publisher/url/tickers.
-    const articleMeta = await this.loadArticleMeta(top.map((s) => s.sourceArticleId));
+    const articleMeta = await this.loadArticleMeta(top.map((s) => s.sourceArticleId), now);
 
     return top.map((s) => {
       const meta = articleMeta.get(s.sourceArticleId);
@@ -170,12 +171,15 @@ export class DigestBuilder {
     });
   }
 
-  private async loadArticleMeta(ids: string[]): Promise<Map<string, NewsArticle>> {
+  private async loadArticleMeta(ids: string[], now: Date): Promise<Map<string, NewsArticle>> {
     if (ids.length === 0) return new Map();
     const idSet = new Set(ids);
-    const today = await this.newsStore.readDay(new Date());
+    // Read news for the digest's reference day (+ prior day for cross-day
+    // windows), NOT the wall-clock day — otherwise the headline join misses
+    // whenever the digest is built for any day other than the literal today.
+    const today = await this.newsStore.readDay(now);
     const yest = await this.newsStore.readDay(
-      new Date(Date.now() - 24 * 60 * 60 * 1000),
+      new Date(now.getTime() - 24 * 60 * 60 * 1000),
     );
     const map = new Map<string, NewsArticle>();
     for (const a of [...yest, ...today]) {

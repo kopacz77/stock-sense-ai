@@ -18,6 +18,85 @@ export interface DataLoader {
 }
 
 /**
+ * Validate OHLCV data quality. Standalone so every loader shares one
+ * implementation instead of instantiating a sibling loader just to reach it.
+ */
+export function validateHistoricalData(data: HistoricalDataPoint[]): DataValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Check if data is empty
+  if (data.length === 0) {
+    errors.push("No data points provided");
+    return {
+      isValid: false,
+      errors,
+      warnings,
+      quality: {
+        totalPoints: 0,
+        missingPoints: 0,
+        completeness: 0,
+        startDate: new Date(),
+        endDate: new Date(),
+        symbols: [],
+        gaps: [],
+      },
+    };
+  }
+
+  // Sort data by timestamp
+  const sortedData = [...data].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+  // Validate data points
+  for (let i = 0; i < sortedData.length; i++) {
+    const point = sortedData[i];
+    if (!point) continue;
+
+    // Validate prices
+    if (point.open <= 0 || point.high <= 0 || point.low <= 0 || point.close <= 0) {
+      errors.push(`Invalid price at index ${i}: prices must be positive`);
+    }
+
+    // Validate OHLC relationship
+    if (point.high < point.low) {
+      errors.push(`Invalid OHLC at index ${i}: high cannot be less than low`);
+    }
+    if (point.high < point.open || point.high < point.close) {
+      warnings.push(`Invalid high at index ${i}: high should be >= open and close`);
+    }
+    if (point.low > point.open || point.low > point.close) {
+      warnings.push(`Invalid low at index ${i}: low should be <= open and close`);
+    }
+
+    // Validate volume
+    if (point.volume < 0) {
+      errors.push(`Invalid volume at index ${i}: volume cannot be negative`);
+    }
+  }
+
+  // Calculate quality metrics
+  const symbols = [...new Set(data.map((d) => d.symbol))];
+  const firstPoint = sortedData[0];
+  const lastPoint = sortedData[sortedData.length - 1];
+  const quality = {
+    totalPoints: data.length,
+    missingPoints: 0,
+    completeness: 100,
+    startDate: firstPoint?.timestamp ?? new Date(),
+    endDate: lastPoint?.timestamp ?? new Date(),
+    symbols,
+    gaps: [],
+  };
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    warnings,
+    quality,
+  };
+}
+
+/**
  * CSV data loader implementation
  */
 export class CSVDataLoader implements DataLoader {
@@ -67,78 +146,7 @@ export class CSVDataLoader implements DataLoader {
    * @returns Validation result
    */
   validate(data: HistoricalDataPoint[]): DataValidationResult {
-    const errors: string[] = [];
-    const warnings: string[] = [];
-
-    // Check if data is empty
-    if (data.length === 0) {
-      errors.push("No data points provided");
-      return {
-        isValid: false,
-        errors,
-        warnings,
-        quality: {
-          totalPoints: 0,
-          missingPoints: 0,
-          completeness: 0,
-          startDate: new Date(),
-          endDate: new Date(),
-          symbols: [],
-          gaps: [],
-        },
-      };
-    }
-
-    // Sort data by timestamp
-    const sortedData = [...data].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-
-    // Validate data points
-    for (let i = 0; i < sortedData.length; i++) {
-      const point = sortedData[i];
-      if (!point) continue;
-
-      // Validate prices
-      if (point.open <= 0 || point.high <= 0 || point.low <= 0 || point.close <= 0) {
-        errors.push(`Invalid price at index ${i}: prices must be positive`);
-      }
-
-      // Validate OHLC relationship
-      if (point.high < point.low) {
-        errors.push(`Invalid OHLC at index ${i}: high cannot be less than low`);
-      }
-      if (point.high < point.open || point.high < point.close) {
-        warnings.push(`Invalid high at index ${i}: high should be >= open and close`);
-      }
-      if (point.low > point.open || point.low > point.close) {
-        warnings.push(`Invalid low at index ${i}: low should be <= open and close`);
-      }
-
-      // Validate volume
-      if (point.volume < 0) {
-        errors.push(`Invalid volume at index ${i}: volume cannot be negative`);
-      }
-    }
-
-    // Calculate quality metrics
-    const symbols = [...new Set(data.map((d) => d.symbol))];
-    const firstPoint = sortedData[0];
-    const lastPoint = sortedData[sortedData.length - 1];
-    const quality = {
-      totalPoints: data.length,
-      missingPoints: 0,
-      completeness: 100,
-      startDate: firstPoint?.timestamp ?? new Date(),
-      endDate: lastPoint?.timestamp ?? new Date(),
-      symbols,
-      gaps: [],
-    };
-
-    return {
-      isValid: errors.length === 0,
-      errors,
-      warnings,
-      quality,
-    };
+    return validateHistoricalData(data);
   }
 }
 
@@ -199,8 +207,7 @@ export class MemoryDataLoader implements DataLoader {
    * @returns Validation result
    */
   validate(data: HistoricalDataPoint[]): DataValidationResult {
-    const loader = new CSVDataLoader({ type: "CSV", basePath: "" });
-    return loader.validate(data);
+    return validateHistoricalData(data);
   }
 
   /**

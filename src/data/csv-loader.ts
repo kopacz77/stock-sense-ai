@@ -247,7 +247,16 @@ export class CSVLoader {
   ): OHLCVData | null {
     const { columns } = options;
 
-    if (!columns.date || !columns.open || !columns.high || !columns.low || !columns.close || !columns.volume) {
+    // Column values are indices; index 0 is valid, so test for undefined — a
+    // falsy `!columns.date` check wrongly rejects a Date column in position 0.
+    if (
+      columns.date === undefined ||
+      columns.open === undefined ||
+      columns.high === undefined ||
+      columns.low === undefined ||
+      columns.close === undefined ||
+      columns.volume === undefined
+    ) {
       throw new Error('Column indices not properly defined');
     }
 

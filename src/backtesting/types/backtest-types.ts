@@ -204,6 +204,12 @@ export interface PerformanceMetrics {
   valueAtRisk95?: number;
   /** Conditional Value at Risk (expected shortfall) */
   conditionalVaR95?: number;
+  /** Total commissions paid across all trades */
+  totalCommissions?: number;
+  /** Total slippage cost across all trades */
+  totalSlippage?: number;
+  /** Total trading costs (commissions + slippage) */
+  totalCosts?: number;
 }
 
 /**
