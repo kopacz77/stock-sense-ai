@@ -174,6 +174,14 @@ export interface ThemeCandidate {
 export interface PmMapping {
   match: {
     eventSlug: string | null;
+    /**
+     * Case-insensitive prefix on `eventSlug`. Polymarket appends volatile
+     * suffixes to event slugs within a family (e.g. `iran-full-airspace-closure-byptptpt-20260625195253028`),
+     * so exact `eventSlug` equality misses the whole family. Combine with
+     * `questionContains` to split opposite-meaning markets that share a stem
+     * (e.g. Fed "decrease" vs "increase").
+     */
+    eventSlugPrefix?: string | null;
     slugPrefix: string | null;
     questionContains: string | null;
   };

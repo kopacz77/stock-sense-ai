@@ -22,6 +22,7 @@ import { ScoreBacklog } from "../signal/score-backlog.js";
 import { PmMappingEngine } from "../signal/pm-mapping-engine.js";
 import { CatalystRefiner } from "../signal/catalyst-refiner.js";
 import { RollupBuilder } from "../signal/rollup-builder.js";
+import { backfillMissingRollups } from "../signal/rollup-backfill.js";
 import { CalendarRefresher, type CalendarRefresherOptions } from "../signal/calendar/index.js";
 import type {
   CalendarEvent,
@@ -251,8 +252,38 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
       const rollupBuilder = new RollupBuilder({ dataDir });
       rollupSummaries = await rollupBuilder.buildForDay(new Date(), pmSignals);
     } catch (err) {
-      console.warn(
-        `[cycle-runner] rollup build failed: ${err instanceof Error ? err.message : err}`,
+      // Escalated to error (was warn): a swallowed failure here silently drops
+      // the day's primary query surface. The self-heal pass below rebuilds it
+      // on this or a subsequent cycle from the persisted scored-articles.
+      console.error(
+        `[cycle-runner] rollup build FAILED (will self-heal next pass): ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+    }
+
+    // Self-heal: rebuild any recent day whose rollup was silently dropped
+    // (scored-articles present, ticker-day-summary missing). Idempotent —
+    // skips days already built, including today when the build above succeeded.
+    try {
+      const healed = await backfillMissingRollups({ dataDir, lookbackDays: 7 });
+      if (healed.rebuilt.length > 0) {
+        console.warn(
+          `[cycle-runner] rollup self-heal rebuilt: ${healed.rebuilt.join(", ")}`,
+        );
+      }
+      if (healed.failed.length > 0) {
+        console.error(
+          `[cycle-runner] rollup self-heal could not rebuild: ${healed.failed
+            .map((f) => `${f.date} (${f.error})`)
+            .join(", ")}`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        `[cycle-runner] rollup self-heal pass errored: ${
+          err instanceof Error ? err.message : err
+        }`,
       );
     }
   }

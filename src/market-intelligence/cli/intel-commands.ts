@@ -19,6 +19,7 @@ import {
 import { ArticleScorer, type ScoringContext } from "../signal/article-scorer.js";
 import { CalendarRefresher } from "../signal/calendar/index.js";
 import { runStabilityTest } from "../signal/stability-test.js";
+import { backfillMissingRollups } from "../signal/rollup-backfill.js";
 import type { CalendarEvent, PmMappingProposal, TickerDaySummary } from "../signal/types.js";
 import type { NewsArticle } from "../news/types.js";
 import {
@@ -726,6 +727,43 @@ export function registerIntelCommands(program: Command): void {
         return;
       }
       console.log(JSON.stringify(match, null, 2));
+    });
+
+  intel
+    .command("rollup-backfill")
+    .description(
+      "Rebuild any day that has scored-articles but a missing ticker-day-summary (silently-dropped rollup recovery)",
+    )
+    .option("--days <n>", "Only rebuild missing days within the last N days (default: all)")
+    .action(async (opts: { days?: string }) => {
+      const backfillOpts: { dataDir: string; lookbackDays?: number } = { dataDir: DATA_DIR };
+      if (opts.days !== undefined) {
+        const n = Number(opts.days);
+        if (!Number.isFinite(n) || n <= 0) {
+          console.error(`--days must be a positive number, got "${opts.days}".`);
+          process.exit(2);
+        }
+        backfillOpts.lookbackDays = n;
+      }
+      const result = await backfillMissingRollups(backfillOpts);
+      if (result.rebuilt.length === 0 && result.failed.length === 0) {
+        console.log(chalk.green("No missing rollups — all scored-article days have a rollup."));
+      }
+      if (result.rebuilt.length > 0) {
+        console.log(
+          chalk.green(`Rebuilt ${result.rebuilt.length} rollup(s): ${result.rebuilt.join(", ")}`),
+        );
+      }
+      if (result.failed.length > 0) {
+        console.error(
+          chalk.red(
+            `Failed to rebuild ${result.failed.length}: ${result.failed
+              .map((f) => `${f.date} (${f.error})`)
+              .join(", ")}`,
+          ),
+        );
+        process.exit(1);
+      }
     });
 
   intel

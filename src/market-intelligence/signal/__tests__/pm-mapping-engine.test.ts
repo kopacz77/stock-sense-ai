@@ -423,3 +423,188 @@ describe("PmMappingEngine", () => {
     expect(await engine.mappingCount()).toBe(1);
   });
 });
+
+/**
+ * `eventSlugPrefix` exists because Polymarket appends volatile suffixes to event
+ * slugs within a family (`iran-full-airspace-closure-byptptpt-20260625195253028`),
+ * which exact `eventSlug` equality misses — the live failure that starved the
+ * sector-rotation signal of every Iran and Fed market for a month.
+ */
+describe("PmMappingEngine — eventSlugPrefix", () => {
+  const ESCALATION: PmMapping = {
+    match: {
+      eventSlug: null,
+      eventSlugPrefix: "iran-full-airspace-closure",
+      slugPrefix: null,
+      questionContains: null,
+    },
+    tickers: [{ ticker: "XLE", direction: "long", weight: 1.0 }],
+    interpretation: "yesPp",
+  };
+
+  const FED_CUT: PmMapping = {
+    match: {
+      eventSlug: null,
+      eventSlugPrefix: "fed-decision-in-",
+      slugPrefix: null,
+      questionContains: "decrease interest rates",
+    },
+    tickers: [{ ticker: "TLT", direction: "long", weight: 1.0 }],
+    interpretation: "yesPp",
+  };
+
+  const FED_HIKE: PmMapping = {
+    match: {
+      eventSlug: null,
+      eventSlugPrefix: "fed-decision-in-",
+      slugPrefix: null,
+      questionContains: "increase interest rates",
+    },
+    tickers: [{ ticker: "TLT", direction: "short", weight: 1.0 }],
+    interpretation: "yesPp",
+  };
+
+  it("matches an event family despite Polymarket's volatile slug suffix", async () => {
+    await writeConfig(configPath, [ESCALATION]);
+    const engine = new PmMappingEngine({ configPath, dataDir });
+
+    const result = await engine.mapMarket(
+      makeSnapshot({
+        eventSlug: "iran-full-airspace-closure-byptptpt-20260625195253028",
+        question: "Iran full airspace closure by July 15?",
+        oneHourPriceChange: 0.05,
+      }),
+    );
+
+    expect("tickerSignals" in result).toBe(true);
+    if (!("tickerSignals" in result)) return;
+    const xle = result.tickerSignals.find((s) => s.ticker === "XLE");
+    expect(xle?.contributedScore).toBeCloseTo(5, 5); // +5pp × long × 1.0 × yesPp
+    expect(xle?.matchedBy).toBe("eventSlugPrefix=iran-full-airspace-closure");
+  });
+
+  it("does not match a different event family sharing no prefix", async () => {
+    await writeConfig(configPath, [ESCALATION]);
+    const engine = new PmMappingEngine({ configPath, dataDir });
+
+    const result = await engine.mapMarket(
+      makeSnapshot({ eventSlug: "israel-closes-its-airspace-by" }),
+    );
+    expect("unmatched" in result).toBe(true);
+  });
+
+  it("splits opposite-meaning markets in one family via questionContains", async () => {
+    await writeConfig(configPath, [FED_CUT, FED_HIKE]);
+    const engine = new PmMappingEngine({ configPath, dataDir });
+
+    const cut = await engine.mapMarket(
+      makeSnapshot({
+        eventSlug: "fed-decision-in-september-762",
+        question:
+          "Will the Fed decrease interest rates by 25 bps after the September 2026 meeting?",
+        oneHourPriceChange: 0.03,
+      }),
+    );
+    expect("tickerSignals" in cut).toBe(true);
+    if (!("tickerSignals" in cut)) return;
+    expect(cut.tickerSignals).toHaveLength(1);
+    expect(cut.tickerSignals[0]?.contributedScore).toBeCloseTo(3, 5); // bullish TLT
+
+    const hike = await engine.mapMarket(
+      makeSnapshot({
+        eventSlug: "fed-decision-in-july-181",
+        question:
+          "Will the Fed increase interest rates by 25 bps after the July 2026 meeting?",
+        oneHourPriceChange: 0.03,
+      }),
+    );
+    expect("tickerSignals" in hike).toBe(true);
+    if (!("tickerSignals" in hike)) return;
+    expect(hike.tickerSignals).toHaveLength(1);
+    // Same +3pp move, opposite sign — the whole point of the discriminator.
+    expect(hike.tickerSignals[0]?.contributedScore).toBeCloseTo(-3, 5);
+  });
+
+  it("leaves a no-change Fed market unmatched (no signal from either rule)", async () => {
+    await writeConfig(configPath, [FED_CUT, FED_HIKE]);
+    const engine = new PmMappingEngine({ configPath, dataDir });
+
+    const result = await engine.mapMarket(
+      makeSnapshot({
+        eventSlug: "fed-decision-in-july-181",
+        question: "Will the Fed make no change to interest rates in July 2026?",
+      }),
+    );
+    expect("unmatched" in result).toBe(true);
+  });
+
+  it("does not exclude a market whose question merely CONTAINS an exclusion substring", async () => {
+    // "diplomatic" contains "ipl" (cricket) — the live bug that dropped the
+    // entire US-Iran peace-talks family. Word-boundary matching must let it through.
+    await writeConfig(configPath, [
+      {
+        match: {
+          eventSlug: null,
+          eventSlugPrefix: "next-round-of-us-iran-peace-talks",
+          slugPrefix: null,
+          questionContains: null,
+        },
+        tickers: [{ ticker: "XLE", direction: "long", weight: 1.0 }],
+        interpretation: "noPp",
+      },
+    ]);
+    const engine = new PmMappingEngine({ configPath, dataDir });
+
+    const result = await engine.mapMarket(
+      makeSnapshot({
+        eventSlug: "next-round-of-us-iran-peace-talks-byptptpt-20260623022722982",
+        question: "US x Iran diplomatic meeting by July 10, 2026?",
+        oneHourPriceChange: -0.03,
+      }),
+    );
+    expect("tickerSignals" in result).toBe(true);
+  });
+
+  it("still excludes a genuine sports market (whole-word keyword)", async () => {
+    await writeConfig(configPath, [
+      {
+        match: {
+          eventSlug: null,
+          eventSlugPrefix: null,
+          slugPrefix: "will-",
+          questionContains: null,
+        },
+        tickers: [{ ticker: "XLE", direction: "long", weight: 1.0 }],
+        interpretation: "yesPp",
+      },
+    ]);
+    const engine = new PmMappingEngine({ configPath, dataDir });
+
+    const result = await engine.mapMarket(
+      makeSnapshot({
+        slug: "will-team-x-win",
+        question: "Will Team X win the NBA Finals in 2026?",
+      }),
+    );
+    expect("excluded" in result).toBe(true);
+  });
+
+  it("still refuses an all-null catch-all rule", async () => {
+    await writeConfig(configPath, [
+      {
+        match: {
+          eventSlug: null,
+          eventSlugPrefix: null,
+          slugPrefix: null,
+          questionContains: null,
+        },
+        tickers: [{ ticker: "SPY", direction: "long", weight: 1.0 }],
+        interpretation: "yesPp",
+      },
+    ]);
+    const engine = new PmMappingEngine({ configPath, dataDir });
+
+    const result = await engine.mapMarket(makeSnapshot({ eventSlug: "anything" }));
+    expect("unmatched" in result).toBe(true);
+  });
+});

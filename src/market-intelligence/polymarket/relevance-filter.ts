@@ -173,6 +173,18 @@ function buildKeywordRegex(keywords: string[]): RegExp {
   return new RegExp(`(?:^|[^a-z0-9])(?:${parts.join("|")})(?:$|[^a-z0-9])`, "i");
 }
 
+const exclusionRegexSingleton = buildKeywordRegex(EXCLUSION_KEYWORDS);
+
+/**
+ * True if `text` contains a sports/entertainment exclusion keyword as a WHOLE
+ * word. Word-boundary matching (not substring) so "diplomatic" is not excluded
+ * by the cricket keyword "ipl", "seasonal" not by "season", etc. Shared with
+ * PmMappingEngine so the fetch-time filter and the mapping-time filter agree.
+ */
+export function isExcludedByKeyword(text: string): boolean {
+  return exclusionRegexSingleton.test(text);
+}
+
 /** Returns markets whose question (and optionally event context) matches at least one keyword. */
 export function filterRelevantMarkets(
   markets: MarketSnapshot[],

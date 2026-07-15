@@ -1,3 +1,4 @@
+# Mega-cap equities (original watchlist)
 AAPL
 MSFT
 GOOGL
@@ -8,3 +9,32 @@ META
 NFLX
 JPM
 V
+
+# Sector ETFs (added 2026-07-10 — sentiment path to sector-rotation signals; M2-05 prep)
+XLE
+XLF
+XLK
+XLV
+XLI
+XLU
+XLY
+XLP
+XLB
+XLRE
+XLC
+
+# Macro / commodity / rate ETFs
+GLD
+SLV
+TLT
+IEF
+USO
+UNG
+JETS
+IWM
+QQQ
+SPY
+
+# Defense equities referenced by PM geopolitical mappings
+LMT
+RTX

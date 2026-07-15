@@ -1,9 +1,92 @@
 {
-  "version": 1,
-  "lastUpdated": "2026-05-31",
+  "version": 2,
+  "lastUpdated": "2026-07-14",
   "mappings": [
     {
-      "match": { "eventSlug": "iran-ceasefire-continues-through", "slugPrefix": null, "questionContains": null },
+      "match": { "eventSlug": null, "eventSlugPrefix": "will-the-us-invade-iran", "slugPrefix": null, "questionContains": null },
+      "tickers": [
+        { "ticker": "XLE",  "direction": "long",  "weight": 1.0 },
+        { "ticker": "USO",  "direction": "long",  "weight": 1.0 },
+        { "ticker": "LMT",  "direction": "long",  "weight": 0.6 },
+        { "ticker": "RTX",  "direction": "long",  "weight": 0.6 },
+        { "ticker": "JETS", "direction": "short", "weight": 0.5 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "ESCALATION. Yes rising = higher odds of US invasion = war premium into energy/defense, drag on airlines.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
+    },
+    {
+      "match": { "eventSlug": null, "eventSlugPrefix": "us-announces-blockade-on-iran", "slugPrefix": null, "questionContains": null },
+      "tickers": [
+        { "ticker": "XLE",  "direction": "long",  "weight": 1.0 },
+        { "ticker": "USO",  "direction": "long",  "weight": 1.0 },
+        { "ticker": "LMT",  "direction": "long",  "weight": 0.6 },
+        { "ticker": "RTX",  "direction": "long",  "weight": 0.6 },
+        { "ticker": "JETS", "direction": "short", "weight": 0.5 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "ESCALATION. A naval blockade chokes Gulf supply — Yes rising is directly bullish crude.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
+    },
+    {
+      "match": { "eventSlug": null, "eventSlugPrefix": "iran-full-airspace-closure", "slugPrefix": null, "questionContains": null },
+      "tickers": [
+        { "ticker": "XLE",  "direction": "long",  "weight": 0.8 },
+        { "ticker": "USO",  "direction": "long",  "weight": 0.8 },
+        { "ticker": "LMT",  "direction": "long",  "weight": 0.5 },
+        { "ticker": "RTX",  "direction": "long",  "weight": 0.5 },
+        { "ticker": "JETS", "direction": "short", "weight": 0.8 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "ESCALATION. Airspace closure is the clearest airline-negative in the set — JETS short weighted up, oil weighted slightly down vs. invasion/blockade.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
+    },
+    {
+      "match": { "eventSlug": null, "eventSlugPrefix": "israel-closes-its-airspace", "slugPrefix": null, "questionContains": null },
+      "tickers": [
+        { "ticker": "XLE",  "direction": "long",  "weight": 0.8 },
+        { "ticker": "USO",  "direction": "long",  "weight": 0.8 },
+        { "ticker": "LMT",  "direction": "long",  "weight": 0.5 },
+        { "ticker": "RTX",  "direction": "long",  "weight": 0.5 },
+        { "ticker": "JETS", "direction": "short", "weight": 0.8 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "ESCALATION. Same shape as Iranian airspace closure — regional conflict widening.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
+    },
+    {
+      "match": { "eventSlug": null, "eventSlugPrefix": "iran-charges-hormuz-fees", "slugPrefix": null, "questionContains": null },
+      "tickers": [
+        { "ticker": "XLE", "direction": "long", "weight": 1.0 },
+        { "ticker": "USO", "direction": "long", "weight": 1.0 },
+        { "ticker": "LMT", "direction": "long", "weight": 0.3 },
+        { "ticker": "RTX", "direction": "long", "weight": 0.3 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "ESCALATION (economic, not kinetic). Hormuz transit fees are a direct tax on ~20% of seaborne crude — strong oil signal, weak defense signal.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
+    },
+    {
+      "match": { "eventSlug": null, "eventSlugPrefix": "iran-announces-withdrawal-from-mou-negotiations", "slugPrefix": null, "questionContains": null },
+      "tickers": [
+        { "ticker": "XLE",  "direction": "long",  "weight": 0.6 },
+        { "ticker": "USO",  "direction": "long",  "weight": 0.6 },
+        { "ticker": "LMT",  "direction": "long",  "weight": 0.4 },
+        { "ticker": "RTX",  "direction": "long",  "weight": 0.4 },
+        { "ticker": "JETS", "direction": "short", "weight": 0.3 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "ESCALATION (diplomatic breakdown). Yes rising = talks collapsing = war risk back on. Lower weights: it signals intent, not action.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
+    },
+    {
+      "match": { "eventSlug": null, "eventSlugPrefix": "us-iran-final-nuclear-deal", "slugPrefix": null, "questionContains": null },
       "tickers": [
         { "ticker": "XLE",  "direction": "long",  "weight": 1.0 },
         { "ticker": "USO",  "direction": "long",  "weight": 1.0 },
@@ -12,24 +95,26 @@
         { "ticker": "JETS", "direction": "short", "weight": 0.5 }
       ],
       "interpretation": "noPp",
-      "rationale": "Yes resolves = ceasefire holds = bearish energy/defense, bullish airlines. We invert (noPp) so a fall in Yes price (= war risk back) flows as a bullish push into XLE/USO/LMT/RTX.",
-      "addedBy": "manual-seed",
-      "addedAt": "2026-05-31"
+      "rationale": "DE-ESCALATION, inverted. Yes = a nuclear deal lands = war premium drains. noPp flips it: a FALLING deal probability pushes bullish energy/defense — same direction as the escalation rules, which is the point.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
     },
     {
-      "match": { "eventSlug": null, "slugPrefix": "will-bitcoin-reach-", "questionContains": null },
+      "match": { "eventSlug": null, "eventSlugPrefix": "next-round-of-us-iran-peace-talks", "slugPrefix": null, "questionContains": null },
       "tickers": [
-        { "ticker": "COIN", "direction": "long", "weight": 0.8 },
-        { "ticker": "MSTR", "direction": "long", "weight": 1.0 },
-        { "ticker": "IBIT", "direction": "long", "weight": 1.0 }
+        { "ticker": "XLE",  "direction": "long",  "weight": 0.7 },
+        { "ticker": "USO",  "direction": "long",  "weight": 0.7 },
+        { "ticker": "LMT",  "direction": "long",  "weight": 0.4 },
+        { "ticker": "RTX",  "direction": "long",  "weight": 0.4 },
+        { "ticker": "JETS", "direction": "short", "weight": 0.3 }
       ],
-      "interpretation": "yesPp",
-      "rationale": "Yes price rising = BTC strength = bullish all three.",
-      "addedBy": "manual-seed",
-      "addedAt": "2026-05-31"
+      "interpretation": "noPp",
+      "rationale": "DE-ESCALATION, inverted. A scheduled US-Iran diplomatic meeting becoming LESS likely = war risk back on. Weaker than the nuclear-deal rule: a meeting is process, not outcome.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
     },
     {
-      "match": { "eventSlug": null, "slugPrefix": "fed-decision-in-", "questionContains": "rate cut" },
+      "match": { "eventSlug": null, "eventSlugPrefix": "fed-decision-in-", "slugPrefix": null, "questionContains": "decrease interest rates" },
       "tickers": [
         { "ticker": "TLT", "direction": "long",  "weight": 1.0 },
         { "ticker": "IEF", "direction": "long",  "weight": 0.7 },
@@ -37,7 +122,45 @@
         { "ticker": "IWM", "direction": "long",  "weight": 0.6 }
       ],
       "interpretation": "yesPp",
-      "rationale": "Higher Yes price for a rate cut = bullish duration (TLT/IEF), modest small-cap tailwind (IWM), drag on bank NIM (XLF short).",
+      "rationale": "RATE CUT. Rising odds of a cut = bullish duration (TLT/IEF), small-cap tailwind (IWM), drag on bank NIM (XLF short). questionContains discriminates this from the increase markets sharing the same event stem.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
+    },
+    {
+      "match": { "eventSlug": null, "eventSlugPrefix": "fed-decision-in-", "slugPrefix": null, "questionContains": "increase interest rates" },
+      "tickers": [
+        { "ticker": "TLT", "direction": "short", "weight": 1.0 },
+        { "ticker": "IEF", "direction": "short", "weight": 0.7 },
+        { "ticker": "XLF", "direction": "long",  "weight": 0.5 },
+        { "ticker": "IWM", "direction": "short", "weight": 0.6 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "RATE HIKE — the exact mirror of the cut rule. Rising hike odds = bearish duration, bullish bank NIM. Markets asking about NO change match neither rule and correctly produce no signal.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
+    },
+    {
+      "match": { "eventSlug": "fed-rate-hike-in-2026", "eventSlugPrefix": null, "slugPrefix": null, "questionContains": null },
+      "tickers": [
+        { "ticker": "TLT", "direction": "short", "weight": 0.8 },
+        { "ticker": "IEF", "direction": "short", "weight": 0.5 },
+        { "ticker": "XLF", "direction": "long",  "weight": 0.4 },
+        { "ticker": "IWM", "direction": "short", "weight": 0.5 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "RATE HIKE, full-year framing. Same signs as the per-meeting hike rule at lower weight — it is a slower-moving, lower-information market.",
+      "addedBy": "manual-2026-07-14",
+      "addedAt": "2026-07-14"
+    },
+    {
+      "match": { "eventSlug": null, "eventSlugPrefix": null, "slugPrefix": "will-bitcoin-reach-", "questionContains": null },
+      "tickers": [
+        { "ticker": "COIN", "direction": "long", "weight": 0.8 },
+        { "ticker": "MSTR", "direction": "long", "weight": 1.0 },
+        { "ticker": "IBIT", "direction": "long", "weight": 1.0 }
+      ],
+      "interpretation": "yesPp",
+      "rationale": "Yes price rising = BTC strength = bullish all three. Unchanged from v1 — this is the one rule that was firing in production.",
       "addedBy": "manual-seed",
       "addedAt": "2026-05-31"
     }

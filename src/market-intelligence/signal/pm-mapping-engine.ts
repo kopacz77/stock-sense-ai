@@ -5,9 +5,15 @@
  * signal contributions using a hybrid approach:
  *
  *   1. Table-driven match against `config/pm-market-mappings.json`
- *      - Primary join key: `eventSlug` (stable across weekly market versions)
+ *      - Primary join key: `eventSlug` (exact) or `eventSlugPrefix` (case-insensitive
+ *        prefix). Prefer the prefix: Polymarket appends volatile suffixes within an
+ *        event family (`iran-full-airspace-closure-byptptpt-20260625195253028`), so
+ *        exact equality silently misses the family.
  *      - Secondary: `slugPrefix` (case-insensitive prefix on slug)
- *      - Tertiary: `questionContains` (case-insensitive substring on question)
+ *      - Tertiary: `questionContains` (case-insensitive substring on question) —
+ *        the discriminator when one event family holds opposite-meaning markets
+ *        (Fed "decrease" vs "increase" interest rates).
+ *      All populated criteria are ANDed.
  *   2. Exclusion filter (sports/entertainment via EXCLUSION_KEYWORDS) runs
  *      BEFORE the mapping pass so false-positive matches never reach scoring.
  *   3. Markets with NO matching rule surface as `PmMappingProposal` records
@@ -45,7 +51,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import type { MarketSnapshot } from "../polymarket/types.js";
-import { EXCLUSION_KEYWORDS } from "../polymarket/relevance-filter.js";
+import { isExcludedByKeyword } from "../polymarket/relevance-filter.js";
 import { JsonlStore } from "../storage/jsonl-store.js";
 
 import type { PmMapping, PmMappingProposal } from "./types.js";
@@ -220,15 +226,23 @@ export class PmMappingEngine {
   }
 
   private matches(m: PmMapping, s: MarketSnapshot): boolean {
+    const eventSlugPrefix = m.match.eventSlugPrefix ?? null;
     // Refuse to fire a catch-all (all-null) mapping — would match every market.
     if (
       m.match.eventSlug === null &&
+      eventSlugPrefix === null &&
       m.match.slugPrefix === null &&
       m.match.questionContains === null
     ) {
       return false;
     }
     if (m.match.eventSlug !== null && s.eventSlug !== m.match.eventSlug) {
+      return false;
+    }
+    if (
+      eventSlugPrefix !== null &&
+      !(s.eventSlug ?? "").toLowerCase().startsWith(eventSlugPrefix.toLowerCase())
+    ) {
       return false;
     }
     if (
@@ -247,13 +261,16 @@ export class PmMappingEngine {
   }
 
   private isExcluded(s: MarketSnapshot): boolean {
-    const haystack = s.question.toLowerCase();
-    return EXCLUSION_KEYWORDS.some((k) => haystack.includes(k.toLowerCase()));
+    // Word-boundary match (shared with the fetch-time relevance filter) — a plain
+    // substring test wrongly excludes "diplomatic" via "ipl", "album" via itself, etc.
+    return isExcludedByKeyword(s.question);
   }
 
   private matchKey(m: PmMapping): string {
     const parts: string[] = [];
     if (m.match.eventSlug) parts.push(`eventSlug=${m.match.eventSlug}`);
+    if (m.match.eventSlugPrefix)
+      parts.push(`eventSlugPrefix=${m.match.eventSlugPrefix}`);
     if (m.match.slugPrefix) parts.push(`slugPrefix=${m.match.slugPrefix}`);
     if (m.match.questionContains)
       parts.push(`questionContains="${m.match.questionContains}"`);
