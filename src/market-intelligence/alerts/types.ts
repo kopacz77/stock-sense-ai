@@ -7,6 +7,9 @@ export type IntelligenceAlertKind =
   | "HEADLINE_PM_DIVERGENCE"
   | "DAILY_DIGEST";
 
+/** Which correlator produced an alert. Undefined on records written before this was tracked. */
+export type CorrelatorPath = "llm" | "rule-based";
+
 export interface ConfirmedAlert {
   kind: "HEADLINE_PM_CONFIRMED";
   /** The headline that triggered correlation. */
@@ -19,6 +22,8 @@ export interface ConfirmedAlert {
   rationale: string;
   /** ISO timestamp the alert was created. */
   createdAt: string;
+  /** Correlator that produced this alert. Lets rule-based fallbacks be filtered from the corpus. */
+  correlator?: CorrelatorPath;
 }
 
 export interface DivergenceAlert {
@@ -30,6 +35,8 @@ export interface DivergenceAlert {
   windowDescription: string;
   rationale: string;
   createdAt: string;
+  /** Correlator that produced this alert. Lets rule-based fallbacks be filtered from the corpus. */
+  correlator?: CorrelatorPath;
 }
 
 export interface DigestAlert {

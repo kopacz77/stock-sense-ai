@@ -12,7 +12,12 @@ import {
   RELEVANT_TOPIC_KEYWORDS,
 } from "../polymarket/relevance-filter.js";
 import { JsonlStore } from "../storage/jsonl-store.js";
-import type { IntelligenceAlert } from "../alerts/types.js";
+import type {
+  ConfirmedAlert,
+  CorrelatorPath,
+  DivergenceAlert,
+  IntelligenceAlert,
+} from "../alerts/types.js";
 import type { NewsArticle } from "../news/types.js";
 import type { MarketSnapshot } from "../polymarket/types.js";
 
@@ -30,6 +35,19 @@ import type {
   ScoredArticle,
   TickerDaySummary,
 } from "../signal/types.js";
+
+/**
+ * Stamp each CONFIRMED/DIVERGENCE alert with the correlator that produced it.
+ * The IntelligenceAlerter persists alerts verbatim, so this is what makes
+ * rule-based fallbacks filterable out of the M2-05 corpus in alerts-fired.
+ * Returns fresh objects — never mutates the inputs.
+ */
+export function stampCorrelator<T extends ConfirmedAlert | DivergenceAlert>(
+  alerts: T[],
+  correlator: CorrelatorPath,
+): T[] {
+  return alerts.map((a) => ({ ...a, correlator }));
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Priority detection (soft-cap deprioritization helper)
@@ -203,6 +221,11 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
     alerts = rules.correlate(markets, articles);
     correlator = "rule-based";
   }
+
+  // Stamp provenance onto every alert so rule-based fallbacks (LLM unreachable,
+  // context-overflow past the retry, etc.) can be filtered out of the M2-05
+  // corpus. Correlators only emit CONFIRMED/DIVERGENCE here — never digests.
+  alerts = stampCorrelator(alerts as (ConfirmedAlert | DivergenceAlert)[], correlator);
 
   // ── 3.5 Article scoring (M2-04 step). NOTE: NO Promise.all — sequential by
   // construction. ArticleScorer has its own sequential gate, but we also avoid

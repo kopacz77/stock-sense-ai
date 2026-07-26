@@ -52,7 +52,14 @@ export interface LlmCorrelatorOptions {
   maxOutputTokens?: number;
   /** Request timeout in ms. Default 60000 (local models can be slow on first call). */
   timeoutMs?: number;
+  /** Max moved markets included in the prompt. Default 10. Halved on the size-aware retry. */
+  maxMarkets?: number;
+  /** Max recent articles included in the prompt. Default 30. Halved on the size-aware retry. */
+  maxArticles?: number;
 }
+
+/** Minimal OpenAI surface we depend on — lets tests inject a fake client. */
+type OpenAIClientSurface = Pick<OpenAI, "chat" | "models">;
 
 export interface CorrelationCost {
   inputTokens: number;
@@ -63,21 +70,29 @@ export interface CorrelationCost {
 }
 
 export class LlmCorrelator {
-  private client: OpenAI;
+  private client: OpenAIClientSurface;
   private readonly model: string;
   private readonly pricing: ProviderPricing;
   private readonly minMovePp: number;
   private readonly articleAgeMs: number;
   private readonly maxOutputTokens: number;
+  private readonly maxMarkets: number;
+  private readonly maxArticles: number;
 
-  constructor(options: LlmCorrelatorOptions) {
-    this.client = new OpenAI({
-      apiKey: options.apiKey || "lm-studio", // LM Studio ignores key; OpenAI SDK requires non-empty.
-      baseURL: options.endpoint,
-      timeout: options.timeoutMs ?? 60_000,
-      // Prevent the SDK from auto-retrying long-running local inference on transient timeouts.
-      maxRetries: 0,
-    });
+  /**
+   * @param clientOverride for unit-test injection only — production constructs
+   *   a real OpenAI client against `options.endpoint`.
+   */
+  constructor(options: LlmCorrelatorOptions, clientOverride?: OpenAIClientSurface) {
+    this.client =
+      clientOverride ??
+      new OpenAI({
+        apiKey: options.apiKey || "lm-studio", // LM Studio ignores key; OpenAI SDK requires non-empty.
+        baseURL: options.endpoint,
+        timeout: options.timeoutMs ?? 60_000,
+        // Prevent the SDK from auto-retrying long-running local inference on transient timeouts.
+        maxRetries: 0,
+      });
     this.model = options.model;
     this.pricing =
       options.pricing ??
@@ -86,6 +101,8 @@ export class LlmCorrelator {
     this.minMovePp = options.minMovePp ?? 3;
     this.articleAgeMs = (options.articleAgeMinutes ?? 90) * 60 * 1000;
     this.maxOutputTokens = options.maxOutputTokens ?? 4096;
+    this.maxMarkets = options.maxMarkets ?? 10;
+    this.maxArticles = options.maxArticles ?? 30;
   }
 
   async correlate(
@@ -98,21 +115,47 @@ export class LlmCorrelator {
       usdEstimate: 0,
       provider: this.model,
     };
-    // Filter + cap to keep the prompt within typical local-model context windows.
-    // Top markets by absolute 1h move so we always feed the most interesting ones first.
+    // Filter first, cap when building the prompt. Top markets by absolute 1h
+    // move so we always feed the most interesting ones first; most-recent
+    // articles first.
     const moved = markets
       .filter((m) => Math.abs(m.oneHourPriceChange ?? 0) * 100 >= this.minMovePp)
-      .sort((a, b) => Math.abs(b.oneHourPriceChange) - Math.abs(a.oneHourPriceChange))
-      .slice(0, 10);
+      .sort((a, b) => Math.abs(b.oneHourPriceChange) - Math.abs(a.oneHourPriceChange));
     if (moved.length === 0) return { alerts: [], cost: emptyCost };
 
     const now = Date.now();
     const recent = articles
       .filter((a) => now - Date.parse(a.publishedAt) <= this.articleAgeMs)
-      .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
-      .slice(0, 30);
+      .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
 
-    const userMessage = this.buildUserMessage(moved, recent);
+    // Size-aware single retry: the local model's context window (n_ctx) and the
+    // request timeout are both size-sensitive. On a context-overflow or timeout,
+    // retry ONCE with a halved prompt rather than degrading the whole cycle to
+    // the rule-based correlator. A connection error (server down) can't be helped
+    // by a smaller prompt, so it propagates immediately.
+    try {
+      return await this.attempt(moved, recent, this.maxMarkets, this.maxArticles);
+    } catch (err) {
+      if (!isRetryableSizeError(err)) throw err;
+      return await this.attempt(
+        moved,
+        recent,
+        Math.max(1, Math.floor(this.maxMarkets / 2)),
+        Math.max(1, Math.floor(this.maxArticles / 2)),
+      );
+    }
+  }
+
+  /** One correlation attempt at the given prompt caps. */
+  private async attempt(
+    moved: MarketSnapshot[],
+    recent: NewsArticle[],
+    maxMarkets: number,
+    maxArticles: number,
+  ): Promise<{ alerts: IntelligenceAlert[]; cost: CorrelationCost }> {
+    const markets = moved.slice(0, maxMarkets);
+    const articles = recent.slice(0, maxArticles);
+    const userMessage = this.buildUserMessage(markets, articles);
 
     // Note: response_format omitted. LM Studio rejects "json_object" (wants
     // "json_schema" or "text"); cloud providers vary. Our parseDecisions()
@@ -130,7 +173,7 @@ export class LlmCorrelator {
 
     const text = response.choices[0]?.message?.content ?? "";
     const decisions = parseDecisions(text);
-    const alerts = this.buildAlerts(decisions, moved, recent);
+    const alerts = this.buildAlerts(decisions, markets, articles);
 
     const inputTokens = response.usage?.prompt_tokens ?? 0;
     const outputTokens = response.usage?.completion_tokens ?? 0;
@@ -286,6 +329,25 @@ Rules:
 - If multiple headlines could explain a move, pick the most material one.
 - Markets that moved due to stale order book activity (e.g. very low 24h volume) should be NO_ALERT.
 - This bot operates on a 15-minute polling cadence; treat headlines older than 90 minutes as background context, not direct catalysts.`;
+
+/**
+ * True when a failed correlation attempt could plausibly succeed with a smaller
+ * prompt: local-model context overflow (LM Studio's `n_keep >= n_ctx` 400) or a
+ * request timeout (a shorter prompt generates faster). A connection error means
+ * the server is unreachable, which no amount of trimming fixes — those return
+ * false so the caller falls straight through to the rule-based correlator.
+ */
+function isRetryableSizeError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes("context length") ||
+    msg.includes("n_ctx") ||
+    msg.includes("n_keep") ||
+    msg.includes("tokens to keep") ||
+    msg.includes("timed out") ||
+    msg.includes("timeout")
+  );
+}
 
 function parseDecisions(text: string): LlmDecision[] {
   const stripped = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
