@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 11
 status: executing
-stopped_at: Completed 11-01-PLAN.md
-last_updated: "2026-08-28T05:38:48.315Z"
+stopped_at: Completed 11-02-PLAN.md
+last_updated: "2026-08-28T06:03:14.716Z"
 progress:
   total_phases: 0
   completed_phases: 0
@@ -139,6 +139,7 @@ current_phase_name: ai-strategy
 ## Decisions
 
 - [Phase ?]: 11-01: D-16 materiality pre-screen shipped (predictMateriality/comparePrescreen wired into cycle-runner); retention bar (>=0.85) not met — 0.81 training / 0.69 held-out, flagged for operator review, see 11-01-SUMMARY.md
+- [Phase ?]: 11-02: SECTOR_ROTATION_FROM_PM tracer shipped end-to-end; src/strategy/ contract stable for 11-03/11-04
 
 ### 2026-05-31: Plan 10-06 — Scheduled Digest Delivery + Break-Glass (Replacing M2-03 Bare 4-Cap)
 
@@ -562,9 +563,10 @@ This was the explicit acceptance fixture for M2-04 and it passes. The data subst
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 11 P01 | 55min | 3 tasks | 6 files |
+| Phase 11 P02 | 30min | 3 tasks | 19 files |
 
 ## Session
 
-**Last session:** 2026-08-28T05:38:48.292Z
-**Stopped at:** Completed 11-01-PLAN.md
+**Last session:** 2026-08-28T06:03:14.580Z
+**Stopped at:** Completed 11-02-PLAN.md
 **Resume file:** None
