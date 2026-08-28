@@ -182,8 +182,26 @@ async function readPersistedCandidates(): Promise<StrategyCandidate[]> {
     .map((l) => JSON.parse(l) as StrategyCandidate);
 }
 
+async function writeRollupFixtureRange(
+  dir: string,
+  startIso: string,
+  endIso: string,
+  build: (dateIso: string) => TickerDaySummary[],
+): Promise<void> {
+  const start = new Date(`${startIso}T00:00:00.000Z`);
+  const end = new Date(`${endIso}T00:00:00.000Z`);
+  for (
+    const cursor = new Date(start);
+    cursor.getTime() <= end.getTime();
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  ) {
+    const iso = cursor.toISOString().split("T")[0] ?? "";
+    await writeRollupFixture(dir, iso, build(iso));
+  }
+}
+
 describe("strategy CLI — full subcommand surface", () => {
-  it("every subcommand (except backtest, 11-06's job) exits 0 on valid input and completes the accept/close + skip round-trip", async () => {
+  it("every subcommand exits 0 on valid input and completes the accept/close + skip round-trip", async () => {
     await writeRollupFixture(intelDataDir, DATE, [strongPmRollup("XLE"), strongPmRollup("IWM")]);
     const deps = defaultDeps();
     const program = buildProgram(deps);
@@ -236,7 +254,7 @@ describe("strategy CLI — full subcommand surface", () => {
     expect(logLines.join("\n")).toContain("XLE");
   });
 
-  it("[PLACEHOLDER for 11-06] backtest is not yet registered — update this test once 11-06 lands it", () => {
+  it("all nine subcommands are registered, including backtest (M2-05 Plan 11-06)", () => {
     const program = buildProgram(defaultDeps());
     const strategyCmd = program.commands.find((c) => c.name() === "strategy");
     const subcommandNames = strategyCmd?.commands.map((c) => c.name()) ?? [];
@@ -250,11 +268,58 @@ describe("strategy CLI — full subcommand surface", () => {
       "decisions-summary",
       "show-vix",
       "show-substrate",
+      "backtest",
     ]);
-    // Loud failure signal: once 11-06 registers `backtest`, this assertion
-    // starts failing — that failure is the reminder to promote it into the
-    // main describe block above instead of leaving it here.
-    expect(subcommandNames).not.toContain("backtest");
+  });
+});
+
+describe("strategy backtest", () => {
+  it("runs the live-window gate over a short fixture window and writes the JSON report", async () => {
+    await writeRollupFixtureRange(intelDataDir, "2026-06-01", "2026-06-05", (iso) => [
+      { ...strongPmRollup("XLE"), date: iso, builtAt: `${iso}T12:00:00.000Z` },
+    ]);
+    const deps = defaultDeps();
+    const program = buildProgram(deps);
+    const outPath = path.join(strategyDataDir, "backtest-out.json");
+
+    const exit = await runCli(program, [
+      "backtest",
+      "--start",
+      "2026-06-01",
+      "--end",
+      "2026-06-05",
+      "--types",
+      "SECTOR_ROTATION_FROM_PM",
+      "--out",
+      outPath,
+    ]);
+    expect(exit).toBeNull();
+
+    const output = logLines.join("\n");
+    expect(output).toContain("single continuous 2026 window — interim, not the per-regime bar");
+    expect(output).toContain("SECTOR_ROTATION_FROM_PM");
+    expect(output).toContain("Verdict (D-15 thresholds");
+    expect(output).toContain("Combined Sharpe > 0:");
+    expect(output).toContain("Combined MaxDD < 25%:");
+
+    const raw = await fs.readFile(outPath, "utf8");
+    const report = JSON.parse(raw) as {
+      label: string;
+      perType: Record<string, unknown>;
+      combined: unknown;
+      window: { startIso: string; endIso: string };
+    };
+    expect(report.label).toBe("single continuous 2026 window — interim, not the per-regime bar");
+    expect(report.window).toEqual({ startIso: "2026-06-01", endIso: "2026-06-05" });
+    expect(report.perType.SECTOR_ROTATION_FROM_PM).toBeDefined();
+    expect(report.combined).toBeDefined();
+  });
+
+  it("exits 2 on an unparseable --start", async () => {
+    const deps = defaultDeps();
+    const program = buildProgram(deps);
+    const exit = await runCli(program, ["backtest", "--start", "not-a-date"]);
+    expect(exit).toBe(2);
   });
 });
 

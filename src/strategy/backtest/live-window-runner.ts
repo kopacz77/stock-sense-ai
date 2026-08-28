@@ -120,6 +120,17 @@ export interface LiveWindowOptions {
   modules?: SignalTypeModule[];
   marketData?: MarketDataSource;
   vixProvider?: VixSource;
+  /**
+   * Called once per (pass, day) so a caller (the CLI's `ora` spinner) can
+   * report progress across what's typically a multi-minute replay — up to
+   * `requestedTypes.length` isolated passes plus one combined pass, each
+   * walking every usable day in the window.
+   */
+  onProgress?: (info: {
+    pass: SignalType | "COMBINED";
+    dayIndex: number;
+    dayCount: number;
+  }) => void;
 }
 
 export interface TypeReport {
@@ -338,6 +349,7 @@ interface PassResult {
 }
 
 interface RunPassArgs {
+  passLabel: SignalType | "COMBINED";
   modules: SignalTypeModule[];
   dayIsos: string[];
   intelDataDir: string;
@@ -348,6 +360,7 @@ interface RunPassArgs {
   initialCapital: number;
   maxSimultaneousPositions: number;
   costs: SimulationCosts;
+  onProgress?: LiveWindowOptions["onProgress"];
 }
 
 /**
@@ -373,8 +386,14 @@ async function runPass(args: RunPassArgs): Promise<PassResult> {
   let firstCandidateDateIso: string | null = null;
   let lastCandidateDateIso: string | null = null;
 
-  for (const dateIso of args.dayIsos) {
+  for (let dayIndex = 0; dayIndex < args.dayIsos.length; dayIndex++) {
+    const dateIso = args.dayIsos[dayIndex] ?? "";
     const dayDate = new Date(`${dateIso}T00:00:00.000Z`);
+    args.onProgress?.({
+      pass: args.passLabel,
+      dayIndex: dayIndex + 1,
+      dayCount: args.dayIsos.length,
+    });
 
     // 1. Realize any positions whose resolved exit date is today (or, for a
     //    weekend/holiday date the engine never runs on, has already passed).
@@ -574,7 +593,11 @@ export async function runLiveWindow(options: LiveWindowOptions): Promise<LiveWin
       return ascending;
     }
 
-    const runPassArgs = (types: readonly SignalType[]): RunPassArgs => ({
+    const runPassArgs = (
+      passLabel: SignalType | "COMBINED",
+      types: readonly SignalType[],
+    ): RunPassArgs => ({
+      passLabel,
       modules: modulesFor(types),
       dayIsos: usableDayIsos,
       intelDataDir,
@@ -585,18 +608,19 @@ export async function runLiveWindow(options: LiveWindowOptions): Promise<LiveWin
       initialCapital,
       maxSimultaneousPositions: config.maxSimultaneousPositions,
       costs,
+      onProgress: options.onProgress,
     });
 
     const perType: Partial<Record<SignalType, TypeReport>> = {};
     let shadowCandidateCount = 0;
 
     for (const type of requestedTypes) {
-      const pass = await runPass(runPassArgs([type]));
+      const pass = await runPass(runPassArgs(type, [type]));
       shadowCandidateCount += pass.shadowCount;
       perType[type] = buildTypeReport(type, pass, initialCapital, options.startIso, options.endIso);
     }
 
-    const combinedPass = await runPass(runPassArgs(requestedTypes));
+    const combinedPass = await runPass(runPassArgs("COMBINED", requestedTypes));
     const combined = buildTypeReport(
       "COMBINED",
       combinedPass,

@@ -1,9 +1,9 @@
 /**
  * `strategy` CLI subcommand group (M2-05 Plan 11-02; completed to the full
- * nine-subcommand RESEARCH §6 surface — minus `backtest`, which lands in
- * 11-06 — by Plan 11-05 Task 3). Ships eight subcommands: `run`,
+ * nine-subcommand RESEARCH §6 surface by Plan 11-05 Task 3 + Plan 11-06
+ * Task 2's `backtest`). Ships all nine subcommands: `run`,
  * `list-candidates`, `accept`, `skip`, `close`, `decisions-summary`,
- * `show-vix`, `show-substrate`.
+ * `show-vix`, `show-substrate`, `backtest`.
  *
  * Commander naming convention: hyphenated single-word subcommand names
  * only — `.command("list candidates")` would be interpreted as one
@@ -33,9 +33,16 @@ import * as path from "node:path";
 
 import chalk from "chalk";
 import type { Command } from "commander";
+import ora from "ora";
 
 import { loadActiveCatalysts } from "../../market-intelligence/signal/catalyst-loader.js";
 import { JsonlStore } from "../../market-intelligence/storage/jsonl-store.js";
+import type { LiveWindowReport, TypeReport } from "../backtest/live-window-runner.js";
+import {
+  LIVE_WINDOW_LABEL,
+  THIN_SAMPLE_TRADE_THRESHOLD,
+  runLiveWindow,
+} from "../backtest/live-window-runner.js";
 import { loadStrategyConfig } from "../config.js";
 import { hasTrailingCoverage } from "../coverage.js";
 import { DecisionLog } from "../decision-log.js";
@@ -51,6 +58,17 @@ import { VixProvider } from "../vix-provider.js";
 const DEFAULT_INTEL_DATA_DIR = "./data/intel";
 const DEFAULT_STRATEGY_DATA_DIR = "./data/strategy";
 const SUBSTRATE_COVERAGE_WINDOW_DAYS = 3;
+/**
+ * First calendar day any real `ticker-day-summary-*.jsonl` file exists on
+ * this substrate (RESEARCH §0). RESEARCH §8's usable-range table gives
+ * SECTOR_ROTATION_FROM_PM an earlier aspirational start of 2026-05-23 (raw
+ * `polymarket-snapshots` go back that far), but reaching it would require
+ * writing a rebuilt rollup file into `data/intel/` for the eight days before
+ * this one — this execution runs under an explicit "never modify
+ * `data/intel/`" directive, so the default window starts here for every
+ * type uniformly instead. An explicit `--start` overrides this.
+ */
+const DEFAULT_BACKTEST_START_ISO = "2026-05-31";
 
 /** All four v1 `SignalType`s — the valid set for `--types`. */
 const ALL_SIGNAL_TYPES: readonly SignalType[] = [
@@ -508,6 +526,151 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
         );
       }
     });
+
+  strategy
+    .command("backtest")
+    .description(
+      `Live-window acceptance gate over the real 2026 substrate (D-15) — ${LIVE_WINDOW_LABEL}`,
+    )
+    .option(
+      "--start <YYYY-MM-DD>",
+      `Window start (default: ${DEFAULT_BACKTEST_START_ISO}, the first day any ticker-day-summary file exists)`,
+    )
+    .option("--end <YYYY-MM-DD>", "Window end (default: today)")
+    .option("--types <csv>", "Comma-separated SignalType names to run (default: all four)")
+    .option(
+      "--out <path>",
+      "Write the full LiveWindowReport JSON here (default: data/strategy/backtest-<start>_<end>.json)",
+    )
+    .action(async (opts: { start?: string; end?: string; types?: string; out?: string }) => {
+      const startIso = parseIsoDateOrExit(opts.start ?? DEFAULT_BACKTEST_START_ISO, "--start");
+      const endIso = parseIsoDateOrExit(
+        opts.end ?? (new Date().toISOString().split("T")[0] ?? ""),
+        "--end",
+      );
+      const requestedTypes = parseTypesOption(opts.types);
+      const typesToRun = requestedTypes ?? ALL_SIGNAL_TYPES;
+
+      const t0 = Date.now();
+      const spinner = ora(`Replaying ${startIso} → ${endIso}...`).start();
+      let report: LiveWindowReport;
+      try {
+        report = await runLiveWindow({
+          startIso,
+          endIso,
+          types: requestedTypes,
+          intelDataDir,
+          marketData: deps.marketData,
+          vixProvider: deps.vixProvider,
+          onProgress: ({ pass, dayIndex, dayCount }) => {
+            spinner.text = `[${pass}] day ${dayIndex}/${dayCount} (${startIso} → ${endIso})...`;
+          },
+        });
+      } catch (err) {
+        spinner.fail(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+      const elapsedSec = ((Date.now() - t0) / 1000).toFixed(1);
+      spinner.succeed(`Replay complete in ${elapsedSec}s.`);
+
+      printBacktestReport(report, typesToRun);
+
+      const outPath = path.resolve(
+        opts.out ?? path.join(strategyDataDir, `backtest-${startIso}_${endIso}.json`),
+      );
+      await fs.mkdir(path.dirname(outPath), { recursive: true });
+      await fs.writeFile(outPath, JSON.stringify(report, null, 2), "utf8");
+      console.log(chalk.gray(`\nFull report written to ${outPath}`));
+    });
+}
+
+/** Shared `--start`/`--end` validation for `backtest` — `process.exit(2)` on an unparseable date. */
+function parseIsoDateOrExit(raw: string, flagName: string): string {
+  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    console.error(chalk.red(`${flagName} must be YYYY-MM-DD (got "${raw}")`));
+    process.exit(2);
+  }
+  return raw;
+}
+
+function formatVerdictLine(label: string, pass: boolean, detail: string): string {
+  const tag = pass ? chalk.green("PASS") : chalk.red("FAIL");
+  return `  ${label.padEnd(28)} ${tag} (${detail})`;
+}
+
+/** `PerformanceMetrics.maxDrawdown` is a negative percentage (e.g. -12.3 = -12.3%) and `winRate` a 0-100 percentage. */
+function formatTypeRow(report: TypeReport): string {
+  const isShadow = report.signalType === "FADE_OVERSHOOT";
+  const thinTag = report.thinSample ? chalk.yellow(" thin-sample") : "";
+  const name = String(report.signalType).padEnd(24);
+  const range = report.usableRange.padEnd(26);
+  const candidates = String(report.candidateCount).padStart(5);
+  const trades = String(report.tradeCount).padStart(6);
+  if (isShadow) {
+    return `${name} ${range} cand=${candidates} trades=${trades}  —  —  —  —  (shadow-only, never sized)`;
+  }
+  const sharpe = report.metrics.sharpeRatio.toFixed(2).padStart(6);
+  const sortino = report.metrics.sortinoRatio.toFixed(2).padStart(6);
+  const maxDd = `${report.metrics.maxDrawdown.toFixed(1)}%`.padStart(8);
+  const winRate = `${report.metrics.winRate.toFixed(1)}%`.padStart(7);
+  return (
+    `${name} ${range} cand=${candidates} trades=${trades} sharpe=${sharpe} ` +
+    `sortino=${sortino} maxDD=${maxDd} win=${winRate}${thinTag}`
+  );
+}
+
+function printBacktestReport(report: LiveWindowReport, typesToRun: readonly SignalType[]): void {
+  console.log(chalk.bold(`\n${report.label}`));
+  console.log(chalk.gray(`Window: ${report.window.startIso} → ${report.window.endIso}`));
+  console.log(
+    chalk.gray(
+      `Caveat: a Sharpe computed from fewer than ${THIN_SAMPLE_TRADE_THRESHOLD} closed trades (marked thin-sample below) is directional only, not a pass/fail signal on its own.`,
+    ),
+  );
+
+  console.log(chalk.bold("\nPer-type:"));
+  for (const type of typesToRun) {
+    const typeReport = report.perType[type];
+    if (typeReport) console.log(formatTypeRow(typeReport));
+  }
+
+  console.log(chalk.bold("\nCombined:"));
+  console.log(formatTypeRow(report.combined));
+
+  const sharpePass = report.combined.metrics.sharpeRatio > 0;
+  const maxDdPass = Math.abs(report.combined.metrics.maxDrawdown) < 25;
+  console.log(chalk.bold("\nVerdict (D-15 thresholds — interim, not the per-regime bar):"));
+  console.log(
+    formatVerdictLine(
+      "Combined Sharpe > 0:",
+      sharpePass,
+      report.combined.metrics.sharpeRatio.toFixed(2),
+    ),
+  );
+  console.log(
+    formatVerdictLine(
+      "Combined MaxDD < 25%:",
+      maxDdPass,
+      `${report.combined.metrics.maxDrawdown.toFixed(1)}%`,
+    ),
+  );
+  const overall = sharpePass && maxDdPass;
+  console.log(
+    `  ${"Overall:".padEnd(28)} ${overall ? chalk.green("PASS") : chalk.red("FAIL")} — interim gate only, not the CONTEXT-locked per-regime bar`,
+  );
+
+  console.log(chalk.bold(`\nShadow candidates observed: ${report.shadowCandidateCount}`));
+
+  const reasonCounts = new Map<string, number>();
+  for (const s of report.skippedDays) {
+    reasonCounts.set(s.reason, (reasonCounts.get(s.reason) ?? 0) + 1);
+  }
+  console.log(chalk.bold(`\nSkipped days: ${report.skippedDays.length}`));
+  const topReasons = [...reasonCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  for (const [reason, count] of topReasons) {
+    console.log(chalk.gray(`  ${count}x ${reason}`));
+  }
 }
 
 /**
