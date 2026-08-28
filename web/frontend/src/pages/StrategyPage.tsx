@@ -306,11 +306,23 @@ function CandidateCard({ candidate, index, decision, onAccepted, onSkipped }: Ca
   const submitAccept = async () => {
     setSubmitting(true);
     try {
+      // WR-02: only send a field when the operator actually edited it away
+      // from the engine's suggestion — an unconditional send collapsed the
+      // override-vs-suggestion distinction (operatorEntry === candidate's
+      // own suggestedEntry no longer meant "operator confirmed this
+      // number"). Unsent fields fall back to suggestedX server-side
+      // already (decision-log.ts recordAccept).
+      const entryNum = Number(entry);
+      const targetNum = Number(target);
+      const stopNum = Number(stop);
+      const sizeUsdNum = sizeUsd !== '' ? Number(sizeUsd) : undefined;
       const overrides = {
-        entry: Number(entry),
-        target: Number(target),
-        stop: Number(stop),
-        ...(sizeUsd !== '' ? { sizeUsd: Number(sizeUsd) } : {}),
+        ...(entryNum !== candidate.suggestedEntry ? { entry: entryNum } : {}),
+        ...(targetNum !== candidate.suggestedTarget ? { target: targetNum } : {}),
+        ...(stopNum !== candidate.suggestedStop ? { stop: stopNum } : {}),
+        ...(sizeUsdNum !== undefined && sizeUsdNum !== candidate.suggestedSizeUsd
+          ? { sizeUsd: sizeUsdNum }
+          : {}),
         ...(note !== '' ? { note } : {}),
       };
       await api.acceptCandidate(candidate.candidateId, overrides);
