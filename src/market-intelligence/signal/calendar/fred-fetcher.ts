@@ -47,8 +47,20 @@ export const FRED_RELEASE_IDS: FredReleaseDescriptor[] = [
   // config/fomc-schedule-seed.json via SeedFileCalendarLoader instead.
   { id: 10, type: "cpi", label: "CPI", magnitudePrior: 4, timeEt: "08:30" },
   { id: 50, type: "nfp", label: "Employment Situation (NFP)", magnitudePrior: 5, timeEt: "08:30" },
-  { id: 54, type: "pce", label: "Personal Income & Outlays (PCE)", magnitudePrior: 4, timeEt: "08:30" },
-  { id: 9, type: "retail_sales", label: "Advance Retail Sales", magnitudePrior: 3, timeEt: "08:30" },
+  {
+    id: 54,
+    type: "pce",
+    label: "Personal Income & Outlays (PCE)",
+    magnitudePrior: 4,
+    timeEt: "08:30",
+  },
+  {
+    id: 9,
+    type: "retail_sales",
+    label: "Advance Retail Sales",
+    magnitudePrior: 3,
+    timeEt: "08:30",
+  },
   { id: 192, type: "jolts", label: "JOLTS", magnitudePrior: 2, timeEt: "10:00" },
   { id: 53, type: "gdp", label: "GDP", magnitudePrior: 3, timeEt: "08:30" },
 ];
@@ -85,7 +97,9 @@ export class FredCalendarFetcher {
    */
   async fetchUpcoming(days = 60): Promise<CalendarEvent[]> {
     if (!this.apiKey || this.apiKey.trim().length === 0) {
-      console.warn("[FredCalendarFetcher] FRED_API_KEY not configured — returning [] (graceful degradation)");
+      console.warn(
+        "[FredCalendarFetcher] FRED_API_KEY not configured — returning [] (graceful degradation)",
+      );
       return [];
     }
 
@@ -96,7 +110,7 @@ export class FredCalendarFetcher {
     const now = new Date().toISOString();
 
     const settled = await Promise.allSettled(
-      FRED_RELEASE_IDS.map((rd) => this.fetchOne(rd, realtime_start, realtime_end, now))
+      FRED_RELEASE_IDS.map((rd) => this.fetchOne(rd, realtime_start, realtime_end, now)),
     );
 
     const events: CalendarEvent[] = [];
@@ -119,7 +133,7 @@ export class FredCalendarFetcher {
     rd: FredReleaseDescriptor,
     realtime_start: string,
     realtime_end: string,
-    now: string
+    now: string,
   ): Promise<CalendarEvent[]> {
     const url = new URL("https://api.stlouisfed.org/fred/release/dates");
     url.searchParams.set("release_id", String(rd.id));
@@ -150,25 +164,24 @@ export class FredCalendarFetcher {
       );
       return [];
     }
-    return rows
-      .map((row) => ({
-        id: `${rd.type}-${row.date}`,
-        type: rd.type,
-        tickers: [],
-        affectedSectors: [],
-        expectedDate: row.date,
-        expectedTimeEt: rd.timeEt,
-        magnitudePrior: rd.magnitudePrior,
-        direction: "uncertain" as const,
-        confidence: 0.3,
-        source: "calendar:fred" as const,
-        sourceMeta: {
-          release_id: rd.id,
-          label: rd.label,
-          release_name: row.release_name,
-        },
-        firstSeenAt: now,
-      }));
+    return rows.map((row) => ({
+      id: `${rd.type}-${row.date}`,
+      type: rd.type,
+      tickers: [],
+      affectedSectors: [],
+      expectedDate: row.date,
+      expectedTimeEt: rd.timeEt,
+      magnitudePrior: rd.magnitudePrior,
+      direction: "uncertain" as const,
+      confidence: 0.3,
+      source: "calendar:fred" as const,
+      sourceMeta: {
+        release_id: rd.id,
+        label: rd.label,
+        release_name: row.release_name,
+      },
+      firstSeenAt: now,
+    }));
   }
 }
 
