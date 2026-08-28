@@ -23,7 +23,21 @@ import { backfillMissingRollups } from "../signal/rollup-backfill.js";
 import { drainBacklog, releaseDrainLock } from "../signal/backlog-drain.js";
 import { ScoreBacklog } from "../signal/score-backlog.js";
 import { endpointUp, ensureServerUp, findLms, shutdownServer } from "./lm-studio-control.js";
-import type { CalendarEvent, PmMappingProposal, TickerDaySummary } from "../signal/types.js";
+import {
+  evaluatePrescreen,
+  extractFeedId,
+  matchedPrescreenTopics,
+  predictMateriality,
+  type PrescreenLabelledArticle,
+  type PrescreenTopic,
+} from "../signal/materiality-prescreen.js";
+import { JsonlStore } from "../storage/jsonl-store.js";
+import type {
+  CalendarEvent,
+  PmMappingProposal,
+  ScoredArticle,
+  TickerDaySummary,
+} from "../signal/types.js";
 import type { NewsArticle } from "../news/types.js";
 import {
   aggregateThemeCandidates,
@@ -277,6 +291,74 @@ async function writePmMappingConfig(
 function makeAsker(rl: readline.Interface): (q: string) => Promise<string> {
   return (q: string) =>
     new Promise<string>((res) => rl.question(q, (a) => res(a.trim())));
+}
+
+/** Inclusive UTC day range, matching JsonlStore's `${dir}/${stream}-YYYY-MM-DD.jsonl` bucketing. */
+function enumerateDaysUtc(startMs: number, endMs: number): Date[] {
+  const days: Date[] = [];
+  for (let t = startMs; t <= endMs; t += 24 * 60 * 60 * 1000) {
+    days.push(new Date(t));
+  }
+  return days;
+}
+
+/**
+ * Same tier classification `predictMateriality`'s internal `sourceWeight`
+ * uses, replicated here for the `intel prescreen-eval` per-bucket breakdown
+ * only (operator display, not part of the scoring contract).
+ */
+function classifySourceTier(
+  article: Pick<PrescreenLabelledArticle, "id" | "source" | "tickers">,
+  watchlist: Set<string>,
+): string {
+  if (article.source === "finnhub") {
+    const hasWatchlistTicker = article.tickers.some((t) => watchlist.has(t.toUpperCase()));
+    if (hasWatchlistTicker) return "finnhub:watchlist";
+    if (article.tickers.length > 0) return "finnhub:tickered";
+    return "finnhub:untickered";
+  }
+  if (article.source === "rss") {
+    const feedId = extractFeedId(article.id);
+    return feedId ? `rss:${feedId}` : "unknown";
+  }
+  return "unknown";
+}
+
+/**
+ * Matched topic buckets for the `intel prescreen-eval` per-topic breakdown.
+ * Delegates to `matchedPrescreenTopics` so the diagnostic breakdown uses the
+ * exact same word-boundary matcher `predictMateriality` scores with — no
+ * second, possibly-drifting keyword-matching implementation (Rule 1 fix).
+ */
+function matchedTopics(
+  article: Pick<PrescreenLabelledArticle, "headline" | "summary">,
+): PrescreenTopic[] {
+  return matchedPrescreenTopics(article.headline, article.summary);
+}
+
+interface PrescreenBucketStats {
+  count: number;
+  high: number;
+}
+
+function bumpBucket(map: Map<string, PrescreenBucketStats>, key: string, isHigh: boolean): void {
+  const cur = map.get(key) ?? { count: 0, high: 0 };
+  cur.count += 1;
+  if (isHigh) cur.high += 1;
+  map.set(key, cur);
+}
+
+function printBucketBreakdown(label: string, map: Map<string, PrescreenBucketStats>): void {
+  console.log(chalk.bold(`  ${label}:`));
+  const entries = Array.from(map.entries()).sort((a, b) => b[1].count - a[1].count);
+  for (const [key, stats] of entries) {
+    const hitRate = stats.count > 0 ? stats.high / stats.count : 0;
+    console.log(
+      chalk.gray(
+        `    ${key.padEnd(20)} count=${String(stats.count).padStart(5)} high=${String(stats.high).padStart(4)} hitRate=${hitRate.toFixed(3)}`,
+      ),
+    );
+  }
 }
 
 export function registerIntelCommands(program: Command): void {
@@ -1101,6 +1183,125 @@ export function registerIntelCommands(program: Command): void {
             `Stability test failed: ${err instanceof Error ? err.message : String(err)}`,
           );
           process.exit(2);
+        }
+      },
+    );
+
+  intel
+    .command("prescreen-eval")
+    .description(
+      "Offline D-16 retention metric: join news + scored-articles over a window, rank with predictMateriality, report retention at --top-fraction. No LLM calls, no network.",
+    )
+    .requiredOption("--start <YYYY-MM-DD>", "Window start (inclusive, UTC)")
+    .requiredOption("--end <YYYY-MM-DD>", "Window end (inclusive, UTC)")
+    .option("--top-fraction <n>", "Fraction of ranked articles to score", "0.5")
+    .option("--data-dir <path>", "Data directory to read news-*.jsonl / scored-articles-*.jsonl from", DATA_DIR)
+    .option("--emit-fixture <path>", "Write the projected, labelled rows as JSONL to this path")
+    .action(
+      async (opts: {
+        start: string;
+        end: string;
+        topFraction: string;
+        dataDir: string;
+        emitFixture?: string;
+      }) => {
+        const topFraction = Number(opts.topFraction);
+        if (!Number.isFinite(topFraction) || topFraction <= 0 || topFraction > 1) {
+          console.error(`--top-fraction must be a number in (0, 1], got "${opts.topFraction}".`);
+          process.exit(2);
+        }
+        const startMs = Date.parse(opts.start);
+        const endMs = Date.parse(opts.end);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs) {
+          console.error(
+            `--start/--end must be valid YYYY-MM-DD dates with start <= end (got "${opts.start}".."${opts.end}").`,
+          );
+          process.exit(2);
+        }
+
+        const dataDir = opts.dataDir;
+        const days = enumerateDaysUtc(startMs, endMs);
+        const newsStore = new JsonlStore<NewsArticle>(dataDir, "news");
+        const scoredStore = new JsonlStore<ScoredArticle>(dataDir, "scored-articles");
+        const watchlist = new Set((await loadWatchlist()).map((t) => t.toUpperCase()));
+
+        // Pass 1: max materiality per sourceArticleId across the whole window — a
+        // backlog-drained article can land in a different file than the day it was
+        // scored, so build the label map across the full window before joining.
+        const labelBySourceArticleId = new Map<string, number>();
+        for (const day of days) {
+          const rows = await scoredStore.readDay(day);
+          for (const r of rows) {
+            const prev = labelBySourceArticleId.get(r.sourceArticleId) ?? 0;
+            if (r.materiality > prev) labelBySourceArticleId.set(r.sourceArticleId, r.materiality);
+          }
+        }
+
+        // Pass 2: dedup news articles by id (news-*.jsonl re-appends the same
+        // article across cycles), keep only articles that have a label, project
+        // to PrescreenLabelledArticle with a freshly-derived score.
+        const seenNews = new Set<string>();
+        const labelled: PrescreenLabelledArticle[] = [];
+        let rawNewsRows = 0;
+        for (const day of days) {
+          const articles = await newsStore.readDay(day);
+          rawNewsRows += articles.length;
+          for (const a of articles) {
+            if (seenNews.has(a.id)) continue;
+            seenNews.add(a.id);
+            const maxMateriality = labelBySourceArticleId.get(a.id);
+            if (maxMateriality === undefined) continue; // unscored tail — can't score retention
+            const row: PrescreenLabelledArticle = {
+              id: a.id,
+              source: a.source,
+              tickers: a.tickers,
+              headline: a.headline,
+              publishedAt: a.publishedAt,
+              maxMateriality,
+              score: predictMateriality(a, watchlist),
+            };
+            if (a.publisher !== undefined) row.publisher = a.publisher;
+            if (a.category !== undefined) row.category = a.category;
+            if (a.summary !== undefined) row.summary = a.summary.slice(0, 240);
+            labelled.push(row);
+          }
+        }
+
+        const result = evaluatePrescreen(labelled, topFraction);
+        const verdict = result.retention >= 0.85 ? chalk.green("PASS") : chalk.red("FAIL");
+
+        console.log(chalk.bold(`\nprescreen-eval window=${opts.start}..${opts.end} top-fraction=${topFraction}`));
+        console.log(
+          `  rawNewsRows=${rawNewsRows} distinctLabelled=${result.total} highTotal=${result.highTotal} ` +
+            `cutoffIndex=${result.cutoffIndex} highRetained=${result.highRetained} retention=${result.retention.toFixed(4)} ${verdict}`,
+        );
+
+        const tierMap = new Map<string, PrescreenBucketStats>();
+        const topicMap = new Map<string, PrescreenBucketStats>();
+        for (const row of labelled) {
+          const isHigh = row.maxMateriality >= 0.5;
+          bumpBucket(tierMap, classifySourceTier(row, watchlist), isHigh);
+          const topics = matchedTopics(row);
+          if (topics.length === 0) {
+            bumpBucket(topicMap, "(none)", isHigh);
+          } else {
+            for (const topic of topics) bumpBucket(topicMap, topic, isHigh);
+          }
+        }
+        printBucketBreakdown("By source tier", tierMap);
+        printBucketBreakdown("By matched topic", topicMap);
+
+        if (opts.emitFixture) {
+          const resolved = path.resolve(opts.emitFixture);
+          const repoRoot = path.resolve(".");
+          if (resolved !== repoRoot && !resolved.startsWith(repoRoot + path.sep)) {
+            console.error(`--emit-fixture must resolve inside the repo root (got ${resolved}).`);
+            process.exit(2);
+          }
+          await fs.mkdir(path.dirname(resolved), { recursive: true });
+          const lines = labelled.map((r) => JSON.stringify(r)).join("\n");
+          await fs.writeFile(resolved, labelled.length > 0 ? `${lines}\n` : "", "utf8");
+          console.log(chalk.green(`\nWrote ${labelled.length} row(s) to ${resolved}`));
         }
       },
     );
