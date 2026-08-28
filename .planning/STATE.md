@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 11
 status: executing
-stopped_at: Completed 11-03-PLAN.md
-last_updated: "2026-08-28T14:17:10.649Z"
+stopped_at: Completed 11-04-PLAN.md
+last_updated: "2026-08-28T14:29:04.534Z"
 progress:
   total_phases: 0
   completed_phases: 0
@@ -49,7 +49,7 @@ current_phase_name: ai-strategy
 | M2-02 | Alpaca Paper Integration | pending | — | — |
 | M2-03 | Market Intelligence Bot | ✅ COMPLETE | 2026-05-23 | 2026-05-28 |
 | M2-04 | LLM Trade-Signal Layer | ✅ COMPLETE | 2026-05-31 | 2026-05-31 |
-| M2-05 | AI-Augmented Strategy Engine | 📋 PLANNED (8 plans, 5 waves) | — | — |
+| M2-05 | AI-Augmented Strategy Engine | 🔄 IN PROGRESS (4/8 plans: 11-01..11-04 done) | 2026-08-27 | — |
 | M2-06 | Hard Risk Management | pending | — | — |
 | M2-07 | Live Execution + Tax Tracking | pending | — | — |
 
@@ -120,6 +120,7 @@ current_phase_name: ai-strategy
 | 2026-08-27 | Scorer outage + fixes | Found LM Studio off since ~07-26 (15,343-article backlog, month of `articleCount: 0` rollups, no Telegram symptom). Merged `fix/llm-correlator-retry-provenance` into main; committed 11-RESEARCH.md. Built `intel backlog-drain` (`signal/backlog-drain.ts`: publish-day bucketing via `JsonlStore.appendManyOn`, `rebuildRollupForDay`, lock file, abort), scorer-health in digests (`ScorerHealth` on `DigestPayload`), cycle-line `scored=/backlogged=/backlog=` + `SCORER DOWN` warn, `--manage-server` via `cli/lm-studio-control.ts` (`lms.exe` interop). 12 new tests; 380/380 green. Docs: `docs/LM_STUDIO_OPS.md`. Operator direction: LM Studio only "as needed" (RAM); evaluating DeepSeek API. |
 | 2026-08-27 | M2-05 planned | 8 plans in 5 waves committed to `.planning/phases/11-ai-strategy/` (11-01 pre-screen, 11-02 tracer, 11-03 CATALYST, 11-04 SENTIMENT/FADE, 11-05 engine, 11-06 backtest, 11-07 web, 11-08 acceptance). COVERAGE.md declares no new external API. Backtest bar replaced by a live-window gate per operator decision; per-regime backtest deferred with a written gap doc planned in 11-06. |
 | 2026-08-27 | Phase 11 (M2-05) planned | Research refreshed against real data (46e8f4c), VALIDATION.md seeded, PATTERNS.md mapped, 8 plans / 5 waves / 24 tasks written (cebdcb2), plan-checker PASSED with 2 non-blocking warnings (11-02 tracer at 95% of budget; all estimates low-confidence). Operator decisions recorded in CONTEXT.md: materiality pre-screen (≥85% retention bar), v1 signal set (catalyst + PM core, sentiment gated, fade shadow), live-window backtest gate (per-regime bar deferred). FRED key installed + release-id fix + FOMC seed (cb41390). Gate note: GSD `check.decision-coverage-plan` could not parse this CONTEXT.md (no `- **D-NN:**` bullets — project convention predates it); checker independently traced all 22 decisions via each plan's `<decision_map>`. Override recorded here per plan-phase §13a. |
+| 2026-08-28 | Plan 11-04 | Scored-day coverage gate (`coverage.ts`: trailingDayIsos/scoredDayCoverage/hasTrailingCoverage) + SENTIMENT_VELOCITY (gated, `mode: "gated"`, gate() decoupled from generate()) + FADE_OVERSHOOT (shadow-only, `mode: "shadow"`, no import from sizing.ts) landed (commits 588240f, 2aa14a0, ee31cd7). Live regression against real `data/intel`: `hasTrailingCoverage("./data/intel", "2026-08-15", 3)` → `ok:false` (inside the real 2026-07-27→08-27 outage); `hasTrailingCoverage("./data/intel", "2026-06-25", 3)` → `ok:true` (real scored June window). 43 new vitest cases, full suite 537/537 green, `pnpm tsc --noEmit` clean. Both modules exported but not yet registered into `StrategyEngine` — 11-05 owns registry wiring. See 11-04-SUMMARY.md. |
 
 ---
 
@@ -141,6 +142,7 @@ current_phase_name: ai-strategy
 - [Phase ?]: 11-01: D-16 materiality pre-screen shipped (predictMateriality/comparePrescreen wired into cycle-runner); retention bar (>=0.85) not met — 0.81 training / 0.69 held-out, flagged for operator review, see 11-01-SUMMARY.md
 - [Phase ?]: 11-02: SECTOR_ROTATION_FROM_PM tracer shipped end-to-end; src/strategy/ contract stable for 11-03/11-04
 - [Phase ?]: 11-03: CATALYST_ANCHORED signal module + shared catalyst-loader shipped; both core-type contract and D-17 both-population coverage complete; live-data smoke found 0/30 active calendar:-sourced catalysts currently refined (all-uncertain), reported honestly rather than gamed — see 11-03-SUMMARY.md
+- [Phase ?]: 11-04: scored-day coverage gate + SENTIMENT_VELOCITY (gated) + FADE_OVERSHOOT (shadow) shipped; live regression confirmed ok:false for 2026-08-15 (inside outage) and ok:true for 2026-06-25 (real scored day) — see 11-04-SUMMARY.md
 
 ### 2026-05-31: Plan 10-06 — Scheduled Digest Delivery + Break-Glass (Replacing M2-03 Bare 4-Cap)
 
@@ -566,9 +568,10 @@ This was the explicit acceptance fixture for M2-04 and it passes. The data subst
 | Phase 11 P01 | 55min | 3 tasks | 6 files |
 | Phase 11 P02 | 30min | 3 tasks | 19 files |
 | Phase 11 P03 | 50min | 3 tasks | 8 files |
+| Phase 11 P04 | 45min | 3 tasks | 6 files |
 
 ## Session
 
-**Last session:** 2026-08-28T14:17:10.630Z
-**Stopped at:** Completed 11-03-PLAN.md
+**Last session:** 2026-08-28T14:29:04.513Z
+**Stopped at:** Completed 11-04-PLAN.md
 **Resume file:** None
