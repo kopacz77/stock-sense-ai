@@ -551,15 +551,18 @@ export function registerIntelCommands(program: Command): void {
         dataDir: DATA_DIR,
       });
 
-      const printResult = (label: string, r: { articles: number; relevantMarkets: number; alerts: { length: number }; alertsSent: number; correlator: string; llmUsedUsd: number; durationMs: number; scoredArticles: number; backloggedArticles: number; backlogSize: number }) => {
+      const printResult = (label: string, r: { articles: number; relevantMarkets: number; alerts: { length: number }; alertsSent: number; correlator: string; llmUsedUsd: number; durationMs: number; scoredArticles: number; backloggedArticles: number; backlogSize: number; prescreenTop: number; prescreenCut: number }) => {
         const at = new Date().toLocaleString();
         // scored/backlog are on the line so a dead scorer is visible in the
-        // journal without grepping for warnings.
+        // journal without grepping for warnings. prescreenTop/prescreenCut
+        // (D-16) show the pre-screen working: the best-ranked article's score
+        // vs. the score sitting at the soft-cap boundary this cycle.
         console.log(
           chalk.cyan(`[${at}] ${label}`) +
             chalk.gray(
               ` articles=${r.articles} markets=${r.relevantMarkets} alerts=${r.alerts.length} sent=${r.alertsSent} via=${r.correlator}` +
                 ` scored=${r.scoredArticles} backlogged=${r.backloggedArticles} backlog=${r.backlogSize}` +
+                ` prescreenTop=${r.prescreenTop.toFixed(2)} prescreenCut=${r.prescreenCut.toFixed(2)}` +
                 (r.llmUsedUsd > 0 ? ` cost=$${r.llmUsedUsd.toFixed(4)}` : "") +
                 ` (${r.durationMs}ms)`,
             ),

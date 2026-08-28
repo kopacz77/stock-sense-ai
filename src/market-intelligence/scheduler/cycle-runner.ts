@@ -7,10 +7,7 @@ import { LlmCostTracker } from "../correlator/cost-tracker.js";
 import { MacroNewsPoller } from "../news/macro-news-poller.js";
 import { NewsPoller } from "../news/news-poller.js";
 import { PolymarketClient } from "../polymarket/polymarket-client.js";
-import {
-  filterRelevantMarkets,
-  RELEVANT_TOPIC_KEYWORDS,
-} from "../polymarket/relevance-filter.js";
+import { filterRelevantMarkets } from "../polymarket/relevance-filter.js";
 import { JsonlStore } from "../storage/jsonl-store.js";
 import type {
   ConfirmedAlert,
@@ -31,6 +28,11 @@ import { CatalystRefiner } from "../signal/catalyst-refiner.js";
 import { RollupBuilder } from "../signal/rollup-builder.js";
 import { backfillMissingRollups } from "../signal/rollup-backfill.js";
 import { CalendarRefresher, type CalendarRefresherOptions } from "../signal/calendar/index.js";
+import {
+  comparePrescreen,
+  predictMateriality,
+  PRESCREEN_HARD_ADMIT,
+} from "../signal/materiality-prescreen.js";
 import type {
   CalendarEvent,
   CatalystFlag,
@@ -59,25 +61,14 @@ export function stampCorrelator<T extends ConfirmedAlert | DivergenceAlert>(
 // are M2-04's primary deliverable. M2-05 will design fresh signal modules; M2-04's
 // job is to provide the data substrate, not consume it. Do not embed strategy
 // logic in scoring or rollup — keep them descriptive, leave ranking/sizing to M2-05.
-
-/** Flat lowercase macro keyword set; built once at module load from RELEVANT_TOPIC_KEYWORDS. */
-const MACRO_KEYWORDS: ReadonlySet<string> = new Set(
-  Object.values(RELEVANT_TOPIC_KEYWORDS).flat().map((k) => k.toLowerCase()),
-);
-
-/**
- * True if the article should be scored even when the daily cap is hit.
- * Priority articles: ticker ∈ watchlist OR body matches a macro keyword.
- * Soft cap drops everything else past the limit.
- */
-function isPriorityArticle(article: NewsArticle, watchlist: Set<string>): boolean {
-  if (article.tickers.some((t) => watchlist.has(t.toUpperCase()))) return true;
-  const hay = `${article.headline} ${article.summary ?? ""}`.toLowerCase();
-  for (const kw of MACRO_KEYWORDS) {
-    if (hay.includes(kw)) return true;
-  }
-  return false;
-}
+//
+// D-16 (11-01): the boolean `isPriorityArticle` hook (watchlist ticker OR any
+// macro keyword anywhere = always score) is replaced by the ranked
+// materiality pre-screen (`comparePrescreen` / `predictMateriality` /
+// `PRESCREEN_HARD_ADMIT` from `../signal/materiality-prescreen.js`). The
+// scoring step below now sorts by predicted materiality and admits past the
+// daily cap only at or above `PRESCREEN_HARD_ADMIT`, instead of admitting
+// anything that merely mentions a macro keyword.
 
 export interface LlmConfig {
   endpoint: string;
@@ -131,6 +122,10 @@ export interface CycleResult {
   rollupTickerCount: number;
   /** Number of PM-derived TickerSignal records produced from today's snapshots. */
   pmTickerSignalCount: number;
+  /** D-16 pre-screen score of the top-ranked article in this cycle's intake queue (0 if none). */
+  prescreenTop: number;
+  /** D-16 pre-screen score at the soft-cap boundary in this cycle's sorted queue (0 if none). */
+  prescreenCut: number;
   /**
    * Digest fires originating from this cycle. Typically 0 — digests fire from
    * the scheduler heartbeat, not from cycleRunner. Reported here for symmetry.
@@ -232,10 +227,18 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
   // ── 3.5 Article scoring (M2-04 step). NOTE: NO Promise.all — sequential by
   // construction. ArticleScorer has its own sequential gate, but we also avoid
   // Promise.all here for clarity. See ScoreBacklog for failure semantics.
-  let scoringResult: { scored: ScoredArticle[]; backlogged: number; backlogSize: number } = {
+  let scoringResult: {
+    scored: ScoredArticle[];
+    backlogged: number;
+    backlogSize: number;
+    prescreenTop: number;
+    prescreenCut: number;
+  } = {
     scored: [],
     backlogged: 0,
     backlogSize: 0,
+    prescreenTop: 0,
+    prescreenCut: 0,
   };
   if (options.llm) {
     try {
@@ -380,6 +383,8 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
     backlogSize: scoringResult.backlogSize,
     rollupTickerCount: rollupSummaries.length,
     pmTickerSignalCount: pmSignals.length,
+    prescreenTop: scoringResult.prescreenTop,
+    prescreenCut: scoringResult.prescreenCut,
     digestsFiredThisCycle: 0,
     breakGlassFiredThisCycle: breakGlassFired,
     breakGlassReason,
@@ -458,7 +463,13 @@ async function runArticleScoring(
   articles: NewsArticle[],
   options: CycleOptions,
   dataDir: string,
-): Promise<{ scored: ScoredArticle[]; backlogged: number; backlogSize: number }> {
+): Promise<{
+  scored: ScoredArticle[];
+  backlogged: number;
+  backlogSize: number;
+  prescreenTop: number;
+  prescreenCut: number;
+}> {
   const llmCfg = options.llm!;
   const scorer = new ArticleScorer({
     endpoint: llmCfg.endpoint,
@@ -479,14 +490,23 @@ async function runArticleScoring(
   // Filter to articles not yet scored today.
   const newArticles = articles.filter((a) => !seen.has(a.id));
 
-  // Sort: priority first, then publishedAt desc — non-priority articles past the
-  // cap get silently skipped (raw article remains in news-*.jsonl, auditable).
-  newArticles.sort((a, b) => {
-    const pa = isPriorityArticle(a, watchlistSet);
-    const pb = isPriorityArticle(b, watchlistSet);
-    if (pa !== pb) return pa ? -1 : 1;
-    return Date.parse(b.publishedAt) - Date.parse(a.publishedAt);
-  });
+  // Sort by predicted materiality (D-16 pre-screen), tie-broken by publishedAt
+  // desc — articles that don't clear PRESCREEN_HARD_ADMIT past the cap get
+  // silently skipped (raw article remains in news-*.jsonl, auditable).
+  newArticles.sort((a, b) => comparePrescreen(a, b, watchlistSet));
+
+  // Operator-visible pre-screen diagnostics for the cycle log line: the top
+  // score in the queue, and the score sitting at the cap boundary (where the
+  // sorted order crosses from "would be scored under the cap" to "needs
+  // PRESCREEN_HARD_ADMIT to bypass the cap").
+  const topArticle = newArticles[0];
+  const prescreenTop = topArticle ? predictMateriality(topArticle, watchlistSet) : 0;
+  const capBoundaryIndex = Math.max(
+    0,
+    Math.min(newArticles.length - 1, (options.scoreDailyCap ?? 500) - alreadyScored.length),
+  );
+  const cutArticle = newArticles[capBoundaryIndex];
+  const prescreenCut = cutArticle ? predictMateriality(cutArticle, watchlistSet) : 0;
 
   // Compose ScoringContext once per cycle.
   const themesPath = path.resolve("./config/themes.json");
@@ -506,8 +526,12 @@ async function runArticleScoring(
   let runningCount = alreadyScored.length;
 
   for (const article of newArticles) {
-    // Soft-cap: past the daily total, non-priority articles get skipped entirely.
-    if (runningCount >= cap && !isPriorityArticle(article, watchlistSet)) continue;
+    // Soft-cap: past the daily total, only articles at/above PRESCREEN_HARD_ADMIT
+    // (D-16) bypass it — everything else is skipped entirely.
+    if (runningCount >= cap) {
+      const prescreenScore = predictMateriality(article, watchlistSet);
+      if (prescreenScore < PRESCREEN_HARD_ADMIT) continue;
+    }
 
     try {
       const records = await scorer.scoreArticle(article, baseContext);
@@ -562,7 +586,7 @@ async function runArticleScoring(
   }
 
   const backlogSize = await backlog.size();
-  return { scored, backlogged, backlogSize };
+  return { scored, backlogged, backlogSize, prescreenTop, prescreenCut };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
