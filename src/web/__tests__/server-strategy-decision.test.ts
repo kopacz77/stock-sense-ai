@@ -52,6 +52,7 @@ function candidate(overrides: Partial<StrategyCandidate> = {}): StrategyCandidat
     suggestedSizeUsd: 937,
     atrPeriodUsed: 10,
     atrValue: 2,
+    costEvaluation: null,
     ...overrides,
   };
 }

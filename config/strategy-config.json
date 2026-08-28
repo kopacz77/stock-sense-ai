@@ -17,5 +17,17 @@
     "FADE_OVERSHOOT": "shadow"
   },
   "intelDataDir": "./data/intel",
-  "strategyDataDir": "./data/strategy"
+  "strategyDataDir": "./data/strategy",
+  "costs": {
+    "jurisdiction": "ON-CA",
+    "marginalRatePct": null,
+    "capitalGainsInclusionPct": null,
+    "perTradeFeeUsd": 0,
+    "spreadSlippageBps": 5,
+    "fxSpreadBps": 150,
+    "minRewardRisk": 1.5,
+    "niitEnabled": false,
+    "holdingPeriodDays": null,
+    "taxProfilesPath": "./config/tax-profiles.json"
+  }
 }

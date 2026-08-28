@@ -41,6 +41,59 @@ export type SignalMode = "core" | "gated" | "shadow";
 export type CandidateMode = "ranked" | "sub-threshold" | "shadow";
 
 /**
+ * Runtime-selectable jurisdiction for the after-tax/after-fees net-hurdle
+ * cost model (D-24, Plan 11-09). Both rule sets are fully specified in
+ * `config/tax-profiles.json` — see `src/strategy/costs.ts`.
+ */
+export type Jurisdiction = "ON-CA" | "CA-US";
+
+/**
+ * Wash-sale (US, CA-US profile) / superficial-loss (Canada, ON-CA profile)
+ * flag — informational only. Attached to a candidate whose ticker was
+ * closed at a loss within the active profile's `lossRule.windowDays`
+ * trailing days (`src/strategy/costs.ts`'s `buildWashSaleFlag`). NEVER
+ * demotes a candidate; only annotates it and its rationale.
+ */
+export interface WashSaleFlag {
+  rule: string; // the active profile's lossRule.name — "superficial-loss" | "wash-sale"
+  windowDays: number;
+  priorCandidateId: string;
+  priorClosedAt: string; // ISO 8601
+  priorRealizedPnlUsd: number;
+}
+
+/**
+ * Result of running a candidate's prospective entry/target/stop/size
+ * through the active jurisdiction's net hurdle (D-23/D-24,
+ * `src/strategy/costs.ts`'s `evaluateCandidateCosts`). Attached to every
+ * ranked-eligible and cost-demoted candidate as
+ * `StrategyCandidate.costEvaluation` — `null` for shadow candidates (never
+ * sized, so no prospective size) and degenerate-levels candidates (no
+ * priceable risk).
+ */
+export interface CandidateCostEvaluation {
+  jurisdiction: Jurisdiction;
+  prospectiveSizeUsd: number;
+  quantity: number;
+  grossMovePct: number;
+  breakEvenPct: number;
+  grossRewardUsd: number;
+  afterTaxRewardUsd: number;
+  riskUsd: number;
+  netRewardRisk: number;
+  minRewardRisk: number;
+  effectiveTaxRatePct: number;
+  taxRateKnown: boolean;
+  passesBreakEven: boolean;
+  passesRewardRisk: boolean;
+  passes: boolean;
+  /** Set only when `passes` is false because the position was un-priceable (too small / zero risk) rather than a genuine hurdle failure. */
+  failureReason?: string;
+  /** Populated by the engine from the decision log; `null` when no recent same-ticker loss closure exists. */
+  washSaleFlag: WashSaleFlag | null;
+}
+
+/**
  * How a candidate's target price is computed. `atr` is the common case
  * (ATR-multiple-from-entry); `pctOfClose` covers binary catalysts like FDA
  * PDUFA decisions where the move is a deliberate fixed percentage, not an
@@ -129,6 +182,14 @@ export interface StrategyCandidate extends RawSignal {
   /** The period the *target* used. The stop always uses ATR_5 regardless — see levels.ts. */
   atrPeriodUsed: 3 | 5 | 10;
   atrValue: number;
+  /**
+   * The after-tax/after-fees net hurdle evaluation for this candidate's
+   * prospective size (Plan 11-09, D-23/D-24). `null` for shadow candidates
+   * (never sized) and degenerate-levels candidates (no priceable risk) —
+   * every other candidate (ranked, cost-demoted, or otherwise
+   * sub-threshold) carries one.
+   */
+  costEvaluation: CandidateCostEvaluation | null;
 }
 
 /**
@@ -153,6 +214,22 @@ export interface StrategyDecisionRecord extends StrategyCandidate {
   closeRealizedPnlUsd?: number;
   closeRealizedPnlPct?: number;
   closeOperatorNote?: string;
+  /**
+   * Plan 11-09 (D-23/D-24). These three are persisted TOGETHER so an
+   * accepted record stays self-describing if the operator later edits
+   * `tax-profiles.json` — a later recomputation that disagrees with what
+   * was recorded here is then visibly a profile change, not a corrupted
+   * number (T-11-09-06). Computed from the OPERATOR's own entry/target/size
+   * (D-09/D-12), never the engine's suggestion. `null` on skip, and `null`
+   * on accept when `costs.marginalRatePct` is unset or the cost config
+   * failed to load — an operator's accept is never lost to a config
+   * problem.
+   */
+  afterTaxRewardUsd: number | null;
+  /** The active jurisdiction at accept time; `null` on skip or a cost-config failure. */
+  costJurisdiction: Jurisdiction | null;
+  /** The effective tax rate (percent) that produced `afterTaxRewardUsd`; `null` when the tax rate was unknown or on skip/config failure. */
+  costEffectiveTaxRatePct: number | null;
 }
 
 /** The full output of one `StrategyEngine.generateCandidates` call. */

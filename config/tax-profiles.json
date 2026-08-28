@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-08-28",
+  "addedBy": "manual-2026-08-28",
+  "disclaimer": "This file encodes a simplified cost/tax model for RANKING AND LEVEL decisions only — it is not tax advice, it is not a substitute for a professional accountant, and every number in it is written 'confirm with your accountant' for a reason: confirm with your accountant before trusting any rate here for a real filing. Rates marked verified: false were written from general knowledge at the dated asOf, not confirmed against a primary source on that date.",
+  "profiles": {
+    "ON-CA": {
+      "jurisdiction": "ON-CA",
+      "label": "Ontario, Canada — individual resident, non-registered account, swing horizons",
+      "gainCharacterisation": "capital_gain",
+      "inclusionRatePct": {
+        "value": 50,
+        "unit": "pct",
+        "source": "CRA — capital gains inclusion rate for individuals (the 2024 federal budget proposal to raise this to 66.67% above a $250,000 annual threshold was announced then not enacted/deferred by 2025 — treat 50% as the safe baseline but re-confirm; this is a DATED value, never hard-code it as permanent)",
+        "asOf": "2026-08-28",
+        "confirmWithAccountant": true,
+        "verified": false,
+        "note": "Applies to the taxable portion of a capital gain; combined with the operator's own marginal rate in costs.marginalRatePct, never inferred here."
+      },
+      "marginalRateSource": {
+        "value": "operator",
+        "unit": "text",
+        "source": "operator-entered via costs.marginalRatePct — never inferred from jurisdiction, income, or any other field",
+        "asOf": "2026-08-28",
+        "confirmWithAccountant": true,
+        "verified": true,
+        "note": "The combined federal + Ontario marginal tax rate is the operator's own number. With costs.marginalRatePct unset (the shipped default), the engine applies no tax haircut at all."
+      },
+      "businessIncomeRisk": {
+        "flagged": true,
+        "note": "CRA may recharacterise frequent, short-horizon trading as business income rather than capital gains — 100% inclusion, taxed at the full marginal rate, no 50% break. This is a documented risk flag only; the engine does NOT compute this path or attempt to detect trading-frequency thresholds. Confirm your own filing posture with your accountant."
+      },
+      "longTerm": {
+        "available": false,
+        "note": "Canada draws no holding-period distinction for capital gains — the inclusion rate and marginal-rate math are identical whether a position is held for 2 days or 2 years."
+      },
+      "lossRule": {
+        "name": "superficial-loss",
+        "windowDays": 30,
+        "note": "A capital loss is denied (superficial loss) if the same or identical property is repurchased within 30 days before or after the disposition and still held 30 days after. The engine only flags a same-ticker repurchase within the trailing 30 days as informational — it does not track identical-property nuance, options, or the full 61-day window CRA actually applies (30 before + day of + 30 after)."
+      },
+      "fxApplies": true,
+      "fxNote": "Ontario residents compute capital gains and losses in CAD. A USD-priced trade is converted to CAD at both entry and exit using the Bank of Canada rate on each date — this v1 model has no live FX rate feed, so it charges costs.fxSpreadBps as a round-trip cost leg only (a proxy for CAD/USD conversion spread) and reports the resulting hurdle in USD terms rather than attempting a CAD P&L. Real CAD gain/loss depends on the CAD/USD move over the holding period, which can help or hurt independently of the USD trade result — not modelled here.",
+      "regulatorySellFees": {
+        "secSection31FeeBps": {
+          "value": 0.08,
+          "unit": "bps_of_notional",
+          "source": "SEC Section 31 transaction fee (Securities Exchange Act §31) — approximately $8 per $1,000,000 of proceeds as of the most recent rate this model was written against",
+          "asOf": "2026-08-28",
+          "confirmWithAccountant": true,
+          "verified": false,
+          "note": "Applies to the SELL side of a US-listed security transaction regardless of the seller's residency or jurisdiction — an Ontario resident selling a US-listed ETF pays this too. The SEC resets this rate at least annually; re-confirm before trusting it for a live account."
+        },
+        "finraTafBps": {
+          "value": 0.02,
+          "unit": "bps_of_notional",
+          "source": "FINRA Trading Activity Fee (TAF) — quoted per-share (~$0.000166/share for equity sells as of the most recent rate this model was written against), approximated here as bps-of-notional assuming a mid-priced US equity",
+          "asOf": "2026-08-28",
+          "confirmWithAccountant": true,
+          "verified": false,
+          "note": "Also a SELL-side-only fee, also applies regardless of the seller's residency. The per-share-to-bps approximation drifts for very low- or very high-priced tickers — re-derive from the real per-share rate and the actual fill price if this matters at the margin."
+        }
+      },
+      "niit": {
+        "applies": false,
+        "note": "Net Investment Income Tax is a US-only federal tax; not applicable to a Canadian resident filing in Canada."
+      }
+    },
+    "CA-US": {
+      "jurisdiction": "CA-US",
+      "label": "California, USA — individual resident, taxable brokerage account, swing horizons",
+      "gainCharacterisation": "ordinary_income_short_term",
+      "inclusionRatePct": {
+        "value": 100,
+        "unit": "pct",
+        "source": "IRC §1(h) short-term capital gain treatment — a position held one year or less is taxed as ordinary income at the full federal marginal rate, no preferential inclusion",
+        "asOf": "2026-08-28",
+        "confirmWithAccountant": true,
+        "verified": false,
+        "note": "Combined with the operator's own marginal rate in costs.marginalRatePct plus California's marginal rate (California grants no preferential capital-gains rate at all — see stateTreatsGainsAsOrdinaryIncome below)."
+      },
+      "shortTermThresholdDays": {
+        "value": 365,
+        "unit": "days",
+        "source": "IRC §1222 — the one-year holding-period threshold separating short-term from long-term capital gain/loss treatment",
+        "asOf": "2026-08-28",
+        "confirmWithAccountant": true,
+        "verified": false,
+        "note": "A holding period at or below this threshold is short-term (ordinary income rates); above it is long-term (see longTerm below). This engine's 2-15 day swing horizons never cross this threshold in practice, but the model stays correct if the operator ever holds longer."
+      },
+      "stateTreatsGainsAsOrdinaryIncome": true,
+      "stateTreatsGainsAsOrdinaryIncomeNote": "California grants NO preferential rate for long-term capital gains — the California marginal rate applies identically to short- and long-term gains, unlike the federal treatment. Only the FEDERAL leg gets the long-term preferential rate below; the California leg never does.",
+      "longTerm": {
+        "available": true,
+        "selectedBy": "costs.holdingPeriodDays",
+        "federalPreferentialRatePct": {
+          "value": 15,
+          "unit": "pct",
+          "source": "IRC §1(h) long-term capital gains federal preferential rate (0/15/20% tiered by income; 15% used here as the representative default)",
+          "asOf": "2026-08-28",
+          "confirmWithAccountant": true,
+          "verified": false,
+          "note": "Irrelevant to this engine's 2-15 day swing horizons in practice, but selectable via costs.holdingPeriodDays so the model is not silently wrong if the operator ever holds past a year. Does not include the separate California marginal rate, which still applies at its ordinary-income rate regardless of holding period."
+        },
+        "note": "Federal-only preferential treatment; see stateTreatsGainsAsOrdinaryIncome — California's own rate never gets a long-term break."
+      },
+      "traderTaxStatusRisk": {
+        "flagged": true,
+        "note": "IRS trader tax status (TTS) and a mark-to-market (§475(f)) election materially change treatment (ordinary-loss deduction against other income, no wash-sale rule under §475(f), self-employment tax considerations) if the operator's trading activity and intent meet the IRS's facts-and-circumstances test. This is a documented risk/opportunity flag only — the engine does not compute or assume TTS/475(f) treatment. Confirm your own filing posture with your accountant."
+      },
+      "lossRule": {
+        "name": "wash-sale",
+        "windowDays": 30,
+        "note": "IRC §1091 wash-sale rule: a loss is disallowed if a substantially identical security is purchased within 30 days before or after the loss-realizing sale (the real rule spans a 61-day window: 30 before + day of + 30 after); the disallowed loss is added to the basis of the replacement shares rather than lost outright. The engine only flags a same-ticker repurchase within the trailing 30 days as informational — it does not track substantially-identical-security nuance, options, or the full 61-day window."
+      },
+      "fxApplies": false,
+      "regulatorySellFees": {
+        "secSection31FeeBps": {
+          "value": 0.08,
+          "unit": "bps_of_notional",
+          "source": "SEC Section 31 transaction fee (Securities Exchange Act §31) — approximately $8 per $1,000,000 of proceeds as of the most recent rate this model was written against",
+          "asOf": "2026-08-28",
+          "confirmWithAccountant": true,
+          "verified": false,
+          "note": "SELL-side only. The SEC resets this rate at least annually; re-confirm before trusting it for a live account."
+        },
+        "finraTafBps": {
+          "value": 0.02,
+          "unit": "bps_of_notional",
+          "source": "FINRA Trading Activity Fee (TAF) — quoted per-share (~$0.000166/share for equity sells as of the most recent rate this model was written against), approximated here as bps-of-notional assuming a mid-priced US equity",
+          "asOf": "2026-08-28",
+          "confirmWithAccountant": true,
+          "verified": false,
+          "note": "Also SELL-side only. The per-share-to-bps approximation drifts for very low- or very high-priced tickers."
+        }
+      },
+      "niit": {
+        "applies": true,
+        "ratePct": {
+          "value": 3.8,
+          "unit": "pct",
+          "source": "IRC §1411 Net Investment Income Tax — 3.8% on net investment income above the federal MAGI threshold ($200,000 single / $250,000 married filing jointly, not inflation-indexed)",
+          "asOf": "2026-08-28",
+          "confirmWithAccountant": true,
+          "verified": false,
+          "note": "The engine cannot know the operator's Modified Adjusted Gross Income, so this is an explicit opt-in toggle (costs.niitEnabled) applied to the whole effective rate when enabled, never inferred from any other field."
+        },
+        "enabledBy": "costs.niitEnabled",
+        "thresholdNote": "Applies to net investment income above the federal MAGI threshold; the engine cannot know the operator's MAGI, so this is an explicit opt-in toggle, never inferred."
+      }
+    }
+  }
+}

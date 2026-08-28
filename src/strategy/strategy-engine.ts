@@ -46,6 +46,13 @@ import type { OHLCVData } from "../data/types.js";
 import { JsonlStore } from "../market-intelligence/storage/jsonl-store.js";
 import type { StrategyConfig } from "./config.js";
 import { loadStrategyConfig } from "./config.js";
+import {
+  computeNetHurdle,
+  costsDemotionReason,
+  evaluateCandidateCosts,
+  loadTaxProfiles,
+  resolveActiveProfile,
+} from "./costs.js";
 import { computeLevels } from "./levels.js";
 import { defaultSignalModules } from "./signals/index.js";
 import { suggestSizeUsd } from "./sizing.js";
@@ -393,8 +400,16 @@ export class StrategyEngine {
           suggestedSizeUsd: null, // reassigned below for ranked candidates only
           atrPeriodUsed: levels.atrPeriodUsed,
           atrValue: levels.atrValue,
+          costEvaluation: null, // reassigned below for every non-shadow, non-degenerate candidate (Plan 11-09)
         };
       });
+
+    // Plan 11-09 (D-23/D-24): load the tax profiles and resolve the active
+    // jurisdiction ONCE per run. A misconfigured cost model (bad JSON, a
+    // missing jurisdiction, an out-of-range rate) must propagate rather
+    // than silently producing candidates ranked without a hurdle.
+    const taxProfilesFile = await loadTaxProfiles(config.costs.taxProfilesPath);
+    const activeProfile = resolveActiveProfile(taxProfilesFile, config.costs);
 
     // Shadow-mode modules' candidates bypass ranking structurally — a
     // shadow candidate never competes for a ranked/sub-threshold slot no
@@ -402,14 +417,25 @@ export class StrategyEngine {
     // computed levels collapsed (zero/insufficient ATR, or an entry that
     // equals its own target/stop) is un-priceable and is demoted straight
     // to sub-threshold with an explicit reason instead — never silently
-    // ranked/sized with a zero-distance stop (WR-01).
+    // ranked/sized with a zero-distance stop (WR-01). A candidate whose
+    // levels ARE priceable but fails the after-tax/after-fees net hurdle
+    // (Plan 11-09, D-23) is demoted the same way, immediately after the
+    // degenerate-levels branch, reusing its exact shape — pushed to a
+    // demoted array, mode "sub-threshold", suggestedSizeUsd null, reason
+    // appended to rationale, score never mutated, target never re-targeted.
     const shadow: StrategyCandidate[] = [];
     const rankable: StrategyCandidate[] = [];
     const degenerate: StrategyCandidate[] = [];
+    const costFailed: StrategyCandidate[] = [];
     for (const candidate of allCandidates) {
       if (modeByType.get(candidate.signalType) === "shadow") {
+        // Never sized, so no prospective size exists to evaluate a hurdle
+        // against — costEvaluation stays null (already the default above).
         shadow.push({ ...candidate, mode: "shadow" as CandidateMode, suggestedSizeUsd: null });
-      } else if (hasDegenerateLevels(candidate)) {
+        continue;
+      }
+      if (hasDegenerateLevels(candidate)) {
+        // No priceable risk — costEvaluation stays null.
         degenerate.push({
           ...candidate,
           mode: "sub-threshold" as CandidateMode,
@@ -419,9 +445,42 @@ export class StrategyEngine {
             `entry=${candidate.suggestedEntry}, target=${candidate.suggestedTarget}, ` +
             `stop=${candidate.suggestedStop}; insufficient price history to size this trade safely)`,
         });
-      } else {
-        rankable.push(candidate);
+        continue;
       }
+
+      // The break-even leg is size-dependent, so the hurdle MUST be
+      // evaluated with the size this candidate would actually receive if
+      // ranked — the same call the ranking step makes later. Evaluating
+      // after ranking assigns sizes would be too late to demote.
+      const prospectiveSizeUsd = suggestSizeUsd(
+        vix.regime,
+        candidate.signalType,
+        config.assumedEquity,
+        config,
+        candidate.sizeModifier ?? 1,
+      );
+      const hurdle = computeNetHurdle(config.costs, activeProfile, prospectiveSizeUsd);
+      const costEvaluation = evaluateCandidateCosts({
+        entry: candidate.suggestedEntry,
+        target: candidate.suggestedTarget,
+        stop: candidate.suggestedStop,
+        direction: candidate.direction,
+        prospectiveSizeUsd,
+        hurdle,
+      });
+
+      if (!costEvaluation.passes) {
+        costFailed.push({
+          ...candidate,
+          mode: "sub-threshold" as CandidateMode,
+          suggestedSizeUsd: null,
+          costEvaluation,
+          rationale: `${candidate.rationale} ${costsDemotionReason(costEvaluation)}`,
+        });
+        continue;
+      }
+
+      rankable.push({ ...candidate, costEvaluation });
     }
 
     const deduped = resolveTickerCollisions(rankable);
@@ -445,6 +504,7 @@ export class StrategyEngine {
         suggestedSizeUsd: null,
       })),
       ...degenerate,
+      ...costFailed,
     ];
 
     const toPersist = [...ranked, ...subThreshold, ...shadow];

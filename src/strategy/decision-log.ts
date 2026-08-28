@@ -83,6 +83,13 @@ export class DecisionLog {
       operatorTarget: overrides.target ?? candidate.suggestedTarget,
       operatorStop: overrides.stop ?? candidate.suggestedStop,
       operatorSizeUsd: overrides.size ?? candidate.suggestedSizeUsd,
+      // Plan 11-09 Task 2 computes these for real from the operator's own
+      // levels; Plan 11-09 Task 1 lands the null-safe placeholder shape
+      // here so the type change to StrategyDecisionRecord compiles cleanly
+      // ahead of Task 2's real implementation.
+      afterTaxRewardUsd: null,
+      costJurisdiction: null,
+      costEffectiveTaxRatePct: null,
       ...(note !== undefined ? { operatorNote: note } : {}),
     };
     await this.store.appendManyOn([record], new Date(decidedAt));
@@ -100,6 +107,9 @@ export class DecisionLog {
       operatorTarget: null,
       operatorStop: null,
       operatorSizeUsd: null,
+      afterTaxRewardUsd: null,
+      costJurisdiction: null,
+      costEffectiveTaxRatePct: null,
       ...(note !== undefined ? { operatorNote: note } : {}),
     };
     await this.store.appendManyOn([record], new Date(decidedAt));

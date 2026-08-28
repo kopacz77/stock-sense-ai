@@ -44,6 +44,13 @@ import {
   runLiveWindow,
 } from "../backtest/live-window-runner.js";
 import { loadStrategyConfig } from "../config.js";
+import {
+  type AnnotatedRate,
+  type NetHurdle,
+  computeNetHurdle,
+  loadTaxProfiles,
+  resolveActiveProfile,
+} from "../costs.js";
 import { hasTrailingCoverage } from "../coverage.js";
 import { DecisionLog } from "../decision-log.js";
 import { catalystTickers } from "../signals/catalyst-anchored.js";
@@ -52,7 +59,7 @@ import { suggestSizeUsd } from "../sizing.js";
 import type { MarketDataSource, VixSource } from "../strategy-engine.js";
 import { StrategyEngine } from "../strategy-engine.js";
 import { isSubstrateHot, loadRollupsForDay } from "../substrate.js";
-import type { SignalType, StrategyCandidate, StrategyDecisionRecord } from "../types.js";
+import type { SignalType, StrategyCandidate, StrategyDecisionRecord, VixRegime } from "../types.js";
 import { VixProvider } from "../vix-provider.js";
 
 const DEFAULT_INTEL_DATA_DIR = "./data/intel";
@@ -122,13 +129,39 @@ function parseTypesOption(raw: string | undefined): SignalType[] | undefined {
 
 function formatCandidateLine(c: StrategyCandidate): string {
   const sizeText = c.suggestedSizeUsd !== null ? `$${c.suggestedSizeUsd}` : "—";
+  // Plan 11-09 (D-23): net R:R prints on the existing metrics line so an
+  // operator never reads a suggested target as tradeable without also
+  // seeing whether it clears the after-tax/after-fees hurdle.
+  const netRrText = c.costEvaluation !== null ? c.costEvaluation.netRewardRisk.toFixed(2) : "n/a";
   return (
     `${chalk.yellow(c.signalType.padEnd(24))} ${chalk.bold(c.ticker.padEnd(6))} ` +
     `score=${c.score.toFixed(2)} ${c.direction.padEnd(5)} ` +
     `entry=${c.suggestedEntry.toFixed(2)} target=${c.suggestedTarget.toFixed(2)} ` +
-    `stop=${c.suggestedStop.toFixed(2)} size=${sizeText}\n` +
+    `stop=${c.suggestedStop.toFixed(2)} size=${sizeText} net R:R=${netRrText}\n` +
     `  ${chalk.gray(c.candidateId)}\n` +
     `  ${chalk.gray(c.rationale)}`
+  );
+}
+
+/** `strategy costs --show`'s per-rate source line, tagged `[UNVERIFIED]` for any `verified: false` rate. */
+function printAnnotatedRate(label: string, rate: AnnotatedRate): void {
+  const unitText =
+    rate.unit === "pct" ? "%" : rate.unit === "bps_of_notional" ? " bps" : ` ${rate.unit}`;
+  const unverifiedTag = rate.verified ? "" : " [UNVERIFIED]";
+  console.log(
+    `  ${label}: ${rate.value}${unitText} (asOf ${rate.asOf}, source: ${rate.source})${unverifiedTag}`,
+  );
+}
+
+/** `Hurdle: net R:R >= 1.50 | break-even 0.20% | ON-CA | effective tax 26.8%` (or the pre-tax variant). */
+function formatHurdleLine(hurdle: NetHurdle): string {
+  const taxText = hurdle.taxRateKnown
+    ? `effective tax ${hurdle.effectiveTaxRatePct.toFixed(1)}%`
+    : "effective tax pre-tax (marginalRatePct unset)";
+  return (
+    `Hurdle: net R:R >= ${hurdle.minRewardRisk.toFixed(2)} | ` +
+    `break-even ${(hurdle.minGrossMovePct * 100).toFixed(2)}% | ` +
+    `${hurdle.jurisdiction} | ${taxText}`
   );
 }
 
@@ -189,7 +222,28 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
             `\nVIX: ${result.vix.close.toFixed(2)} (${result.vix.regime}, ${result.vix.source})`,
           ),
         );
-        console.log(chalk.gray(`As of ${result.asOfDate}\n`));
+        console.log(chalk.gray(`As of ${result.asOfDate}`));
+
+        // Plan 11-09 (D-23): print the active hurdle once per run, using the
+        // regime's reference (typeModifier=1) size as the representative
+        // break-even — each candidate's own line above prints its own
+        // size-specific net R:R.
+        const costsConfig = await loadStrategyConfig();
+        const taxProfilesFile = await loadTaxProfiles(costsConfig.costs.taxProfilesPath);
+        const activeProfile = resolveActiveProfile(taxProfilesFile, costsConfig.costs);
+        const referenceSizeUsd = suggestSizeUsd(
+          result.vix.regime,
+          "CATALYST_ANCHORED",
+          costsConfig.assumedEquity,
+          costsConfig,
+          1,
+        );
+        const hurdle = computeNetHurdle(costsConfig.costs, activeProfile, referenceSizeUsd);
+        console.log(formatHurdleLine(hurdle));
+        if (hurdle.degradedReason) {
+          console.log(chalk.yellow(`WARNING: ${hurdle.degradedReason}`));
+        }
+        console.log();
 
         if (rankedCapped.length === 0) {
           console.log(chalk.yellow("No candidates above threshold today.\n"));
@@ -560,7 +614,7 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
     .action(async (opts: { start?: string; end?: string; types?: string; out?: string }) => {
       const startIso = parseIsoDateOrExit(opts.start ?? DEFAULT_BACKTEST_START_ISO, "--start");
       const endIso = parseIsoDateOrExit(
-        opts.end ?? (new Date().toISOString().split("T")[0] ?? ""),
+        opts.end ?? new Date().toISOString().split("T")[0] ?? "",
         "--end",
       );
       const requestedTypes = parseTypesOption(opts.types);
@@ -596,6 +650,102 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
       await fs.mkdir(path.dirname(outPath), { recursive: true });
       await fs.writeFile(outPath, JSON.stringify(report, null, 2), "utf8");
       console.log(chalk.gray(`\nFull report written to ${outPath}`));
+    });
+
+  strategy
+    .command("costs")
+    .description(
+      "Print the active jurisdiction's tax-profile sources and the resulting net hurdle (D-23/D-24) — a sanity check to run against your accountant's advice",
+    )
+    .option(
+      "--show",
+      "Print the active profile and hurdle (this is the command's only behaviour — the flag is accepted because D-24 names it explicitly)",
+      false,
+    )
+    .option(
+      "--size <usd>",
+      "Compute the hurdle for one specific prospective size instead of the three VIX-regime defaults",
+    )
+    .action(async (opts: { show: boolean; size?: string }) => {
+      let sizeOverride: number | undefined;
+      if (opts.size !== undefined) {
+        sizeOverride = Number(opts.size);
+        if (!Number.isFinite(sizeOverride) || sizeOverride <= 0) {
+          console.error(chalk.red("--size must be a positive number"));
+          process.exit(2);
+        }
+      }
+
+      const config = await loadStrategyConfig();
+      const taxProfilesFile = await loadTaxProfiles(config.costs.taxProfilesPath);
+      const activeProfile = resolveActiveProfile(taxProfilesFile, config.costs);
+
+      console.log(chalk.bold(`\nActive jurisdiction: ${config.costs.jurisdiction}`));
+      console.log(activeProfile.label);
+      console.log(`Gain characterisation: ${activeProfile.gainCharacterisation}`);
+      console.log(
+        `Loss rule: ${activeProfile.lossRule.name} (${activeProfile.lossRule.windowDays}-day window) — ${activeProfile.lossRule.note}`,
+      );
+
+      const regimes: VixRegime[] = ["calm", "elevated", "stressed"];
+      const sizesToShow: Array<{ label: string; sizeUsd: number }> =
+        sizeOverride !== undefined
+          ? [{ label: `--size $${sizeOverride}`, sizeUsd: sizeOverride }]
+          : regimes.map((regime) => ({
+              label: `${regime} regime`,
+              sizeUsd: suggestSizeUsd(regime, "CATALYST_ANCHORED", config.assumedEquity, config, 1),
+            }));
+
+      let printedWarning = false;
+      for (const { label, sizeUsd } of sizesToShow) {
+        const hurdle = computeNetHurdle(config.costs, activeProfile, sizeUsd);
+        console.log(chalk.bold(`\n${label} (size $${sizeUsd}):`));
+        console.log(`  Fee/slippage break-even: ${(hurdle.minGrossMovePct * 100).toFixed(3)}%`);
+        console.log(
+          `    fee+slippage leg: ${(hurdle.breakEvenLegs.feeSlippage * 100).toFixed(4)}%`,
+        );
+        if (hurdle.breakEvenLegs.fx !== undefined) {
+          console.log(`    fx leg: ${(hurdle.breakEvenLegs.fx * 100).toFixed(4)}%`);
+        }
+        console.log(
+          `    regulatory sell-fee leg: ${(hurdle.breakEvenLegs.regulatorySell * 100).toFixed(4)}%`,
+        );
+        console.log(`  Minimum after-tax reward:risk: ${hurdle.minRewardRisk.toFixed(2)}`);
+        console.log(
+          hurdle.taxRateKnown
+            ? `  Effective tax rate: ${hurdle.effectiveTaxRatePct.toFixed(1)}%`
+            : "  Effective tax rate: pre-tax (marginalRatePct unset)",
+        );
+        if (hurdle.degradedReason && !printedWarning) {
+          console.log(chalk.yellow(`\nWARNING: ${hurdle.degradedReason}`));
+          printedWarning = true;
+        }
+      }
+
+      console.log(chalk.bold("\nSources (confirm with your accountant):"));
+      printAnnotatedRate("inclusionRatePct", activeProfile.inclusionRatePct);
+      if (activeProfile.shortTermThresholdDays) {
+        printAnnotatedRate("shortTermThresholdDays", activeProfile.shortTermThresholdDays);
+      }
+      if (activeProfile.longTerm.federalPreferentialRatePct) {
+        printAnnotatedRate(
+          "longTerm.federalPreferentialRatePct",
+          activeProfile.longTerm.federalPreferentialRatePct,
+        );
+      }
+      printAnnotatedRate(
+        "regulatorySellFees.secSection31FeeBps",
+        activeProfile.regulatorySellFees.secSection31FeeBps,
+      );
+      printAnnotatedRate(
+        "regulatorySellFees.finraTafBps",
+        activeProfile.regulatorySellFees.finraTafBps,
+      );
+      if (activeProfile.niit.ratePct) {
+        printAnnotatedRate("niit.ratePct", activeProfile.niit.ratePct);
+      }
+
+      console.log(`\n${taxProfilesFile.disclaimer}`);
     });
 }
 

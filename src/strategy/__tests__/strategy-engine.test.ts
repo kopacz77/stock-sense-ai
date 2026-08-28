@@ -149,8 +149,25 @@ function makeModule(opts: {
   return mod;
 }
 
+/**
+ * Plan 11-09 (D-23): every non-shadow candidate now runs through the
+ * after-tax/after-fees net hurdle before it can rank. The shipped default
+ * `costs.minRewardRisk` (1.5) combined with this file's default
+ * `makeRaw`/`levels.ts` fixtures (2x ATR target ÷ 1.5x ATR stop = a 1.333
+ * gross reward:risk) would otherwise cost-demote nearly every candidate in
+ * this file's pre-11-09 gate/shadow/mode/persistence/failure-isolation
+ * tests — none of which are testing the cost model. `baseConfig()` neutralizes
+ * the hurdle by default (zero slippage/FX legs, a minRewardRisk any positive
+ * ratio clears) so those tests keep asserting what they always asserted;
+ * the dedicated `describe("StrategyEngine — costs demotion (Plan 11-09)")`
+ * block below overrides `costs` explicitly to exercise the real gate.
+ */
 function baseConfig(overrides: Partial<StrategyConfig> = {}): StrategyConfig {
-  return { ...DEFAULT_STRATEGY_CONFIG, ...overrides };
+  return {
+    ...DEFAULT_STRATEGY_CONFIG,
+    costs: { ...DEFAULT_STRATEGY_CONFIG.costs, spreadSlippageBps: 0, fxSpreadBps: 0, minRewardRisk: 0.01 },
+    ...overrides,
+  };
 }
 
 describe("defaultSignalModules", () => {
@@ -620,6 +637,106 @@ describe("StrategyEngine — degenerate levels demotion (WR-01)", () => {
   });
 });
 
+describe("StrategyEngine — costs demotion (Plan 11-09, D-23)", () => {
+  const asOfDate = new Date("2026-06-25T00:00:00.000Z");
+
+  it("a candidate whose gross move is inside the fee break-even is demoted to sub-threshold, never ranked or sized, target and score untouched", async () => {
+    await writeRollupFixture("2026-06-25", [rollup({ ticker: "NVDA" })]);
+
+    const modules = [
+      makeModule({
+        signalType: "CATALYST_ANCHORED",
+        mode: "core",
+        signals: [
+          makeRaw({ signalType: "CATALYST_ANCHORED", ticker: "NVDA", score: 0.7, direction: "long" }),
+        ],
+      }),
+    ];
+
+    // A per-trade fee this large relative to the ~$937 elevated-regime
+    // prospective size guarantees a break-even failure regardless of the
+    // reward:risk leg — minRewardRisk is relaxed to 0.01 to isolate it.
+    const config = baseConfig({
+      costs: {
+        ...DEFAULT_STRATEGY_CONFIG.costs,
+        perTradeFeeUsd: 500,
+        spreadSlippageBps: 0,
+        fxSpreadBps: 0,
+        minRewardRisk: 0.01,
+      },
+    });
+
+    const engine = new StrategyEngine({
+      intelDataDir,
+      strategyDataDir,
+      modules,
+      config,
+      vixProvider: new StubVixProvider(),
+      marketData: new StubMarketData(),
+    });
+
+    const result = await engine.generateCandidates(asOfDate);
+
+    expect(result.ranked.some((c) => c.ticker === "NVDA")).toBe(false);
+    const demoted = result.subThreshold.find((c) => c.ticker === "NVDA");
+    expect(demoted).toBeDefined();
+    expect(demoted?.suggestedSizeUsd).toBeNull();
+    expect(demoted?.score).toBe(0.7);
+    expect(demoted?.suggestedTarget).not.toBe(demoted?.suggestedEntry);
+    expect(demoted?.rationale).toContain("(demoted: costs — ");
+    expect(demoted?.costEvaluation?.passesBreakEven).toBe(false);
+  });
+
+  it("a candidate that clears break-even but whose after-tax net reward:risk falls under minRewardRisk is demoted to sub-threshold, never ranked or sized, target and score untouched", async () => {
+    await writeRollupFixture("2026-06-25", [rollup({ ticker: "MSFT" })]);
+
+    const modules = [
+      makeModule({
+        signalType: "CATALYST_ANCHORED",
+        mode: "core",
+        signals: [
+          makeRaw({ signalType: "CATALYST_ANCHORED", ticker: "MSFT", score: 0.65, direction: "long" }),
+        ],
+      }),
+    ];
+
+    // The default `makeRaw`/`levels.ts` combo (2x ATR target ÷ 1.5x ATR
+    // stop) is a 1.333 gross reward:risk — clears a near-zero break-even
+    // but fails the real shipped default minRewardRisk (1.5), exactly
+    // D-23's second leg. fxSpreadBps is zeroed so the break-even leg stays
+    // small enough to isolate the reward:risk failure.
+    const config = baseConfig({
+      costs: {
+        ...DEFAULT_STRATEGY_CONFIG.costs,
+        spreadSlippageBps: 0,
+        fxSpreadBps: 0,
+        minRewardRisk: 1.5,
+      },
+    });
+
+    const engine = new StrategyEngine({
+      intelDataDir,
+      strategyDataDir,
+      modules,
+      config,
+      vixProvider: new StubVixProvider(),
+      marketData: new StubMarketData(),
+    });
+
+    const result = await engine.generateCandidates(asOfDate);
+
+    expect(result.ranked.some((c) => c.ticker === "MSFT")).toBe(false);
+    const demoted = result.subThreshold.find((c) => c.ticker === "MSFT");
+    expect(demoted).toBeDefined();
+    expect(demoted?.suggestedSizeUsd).toBeNull();
+    expect(demoted?.score).toBe(0.65);
+    expect(demoted?.suggestedTarget).not.toBe(demoted?.suggestedEntry);
+    expect(demoted?.costEvaluation?.passesBreakEven).toBe(true);
+    expect(demoted?.costEvaluation?.passesRewardRisk).toBe(false);
+    expect(demoted?.rationale).toContain("(demoted: costs — ");
+  });
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // Task 2: cross-type ranking — collisions, floor, top-5, next-3, honest empty
 // ───────────────────────────────────────────────────────────────────────────
@@ -648,6 +765,7 @@ function makeCandidate(
     suggestedSizeUsd: null,
     atrPeriodUsed: 5,
     atrValue: 2,
+    costEvaluation: null,
     ...overrides,
   };
 }
