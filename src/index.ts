@@ -22,6 +22,7 @@ import { registerBacktestCommands } from "./cli/backtest-commands.js";
 import { registerPaperTradingCommands } from "./cli/paper-trading-commands.js";
 import { createRiskCommands } from "./cli/risk-commands.js";
 import { registerIntelCommands } from "./market-intelligence/cli/intel-commands.js";
+import { registerStrategyCommands } from "./strategy/cli/strategy-commands.js";
 
 const program = new Command();
 const config = SecureConfig.getInstance();
@@ -1039,6 +1040,9 @@ program.addCommand(riskCommand);
 
 // Register market intelligence commands (M2-03)
 registerIntelCommands(program);
+
+// Register AI-augmented strategy commands (M2-05)
+registerStrategyCommands(program);
 
 // Parse command line arguments
 program.parse();

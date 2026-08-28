@@ -245,6 +245,29 @@ export class TechnicalIndicators {
     return emaValues[emaValues.length - 1] || closes[0] || 0;
   }
 
+  /**
+   * Public sibling of `calculateATR` returning the FULL ATR series (not just
+   * the latest value), for callers that need the ATR history rather than a
+   * single point-in-time reading — e.g. `src/strategy/strategy-engine.ts`
+   * fetching entry/target/stop inputs.
+   *
+   * The returned array is shorter than `data`'s length by `period - 1`
+   * (the `technicalindicators` library needs `period` bars of warmup before
+   * it can emit a first ATR value). The LAST element is the most recent
+   * ATR. Callers MUST pass `data` in OLDEST-FIRST order — the underlying
+   * `ATR.calculate` computes true range as a difference against the prior
+   * bar, so a newest-first array would compute nonsensical (negative-time)
+   * ranges.
+   */
+  static calculateATRSeries(data: PriceData, period: number): number[] {
+    return ATR.calculate({
+      high: data.high,
+      low: data.low,
+      close: data.close,
+      period,
+    });
+  }
+
   private static async calculateATR(data: PriceData, period = 14): Promise<number> {
     const atrInput = {
       high: data.high,
