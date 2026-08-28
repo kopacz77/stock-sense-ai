@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 11
 status: executing
-stopped_at: Completed 11-06-PLAN.md
-last_updated: "2026-08-28T15:54:38.828Z"
+stopped_at: Completed 11-07-PLAN.md
+last_updated: "2026-08-28T20:01:54.861Z"
 progress:
   total_phases: 0
   completed_phases: 0
@@ -49,7 +49,7 @@ current_phase_name: ai-strategy
 | M2-02 | Alpaca Paper Integration | pending | — | — |
 | M2-03 | Market Intelligence Bot | ✅ COMPLETE | 2026-05-23 | 2026-05-28 |
 | M2-04 | LLM Trade-Signal Layer | ✅ COMPLETE | 2026-05-31 | 2026-05-31 |
-| M2-05 | AI-Augmented Strategy Engine | 🔄 IN PROGRESS (6/8 plans: 11-01..11-06 done) | 2026-08-27 | — |
+| M2-05 | AI-Augmented Strategy Engine | 🔄 IN PROGRESS (7/8 plans: 11-01..11-07 done) | 2026-08-27 | — |
 | M2-06 | Hard Risk Management | pending | — | — |
 | M2-07 | Live Execution + Tax Tracking | pending | — | — |
 
@@ -123,6 +123,7 @@ current_phase_name: ai-strategy
 | 2026-08-28 | Plan 11-04 | Scored-day coverage gate (`coverage.ts`: trailingDayIsos/scoredDayCoverage/hasTrailingCoverage) + SENTIMENT_VELOCITY (gated, `mode: "gated"`, gate() decoupled from generate()) + FADE_OVERSHOOT (shadow-only, `mode: "shadow"`, no import from sizing.ts) landed (commits 588240f, 2aa14a0, ee31cd7). Live regression against real `data/intel`: `hasTrailingCoverage("./data/intel", "2026-08-15", 3)` → `ok:false` (inside the real 2026-07-27→08-27 outage); `hasTrailingCoverage("./data/intel", "2026-06-25", 3)` → `ok:true` (real scored June window). 43 new vitest cases, full suite 537/537 green, `pnpm tsc --noEmit` clean. Both modules exported but not yet registered into `StrategyEngine` — 11-05 owns registry wiring. See 11-04-SUMMARY.md. |
 | 2026-08-28 | Plan 11-05 | Four-module registry + cross-type ranking + full strategy CLI landed (commits 84e67ee, 69f8304, f750a9b). `signals/index.ts` (`defaultSignalModules()`); `strategy-engine.ts` gains `assertModulesMatchConfig`/`SignalModeMismatchError`, per-module gate/throw isolation into `skippedTypes`, structural shadow-mode partition, `resolveTickerCollisions` + `rankCandidates` (raw-score-only comparator, D-04). CLI gains `show-substrate`, `run --types`, `list-candidates --include-shadow`, and the fixed D-14 output ordering (VIX/ranked-or-empty/sub-threshold/shadow/skipped-types). 24 new vitest cases; full suite 563/563 green; `pnpm tsc --noEmit` clean. Verified against real `data/intel` (2026-08-26): 5 ranked CATALYST_ANCHORED, 3 sub-threshold, 12 FADE_OVERSHOOT shadow (all size=—), SENTIMENT_VELOCITY gated off with its coverage-gap reason printed verbatim. Deferred (out of scope): a pre-existing Finnhub-API-key-in-error-logs finding, logged to `.planning/phases/11-ai-strategy/deferred-items.md`. See 11-05-SUMMARY.md. |
 | 2026-08-28 | Plan 11-06 | Live-window backtest gate (D-15) landed (commits f0cdc96, 950efb6, 44bc626). `src/strategy/backtest/live-window-runner.ts` — `runLiveWindow`/`simulateCandidate`/`LIVE_WINDOW_LABEL`/`THIN_SAMPLE_TRADE_THRESHOLD`, per-type isolated engine runs (`modules: [oneType]`, the real `strategy run --types` code path) plus one cross-type combined run, `PerformanceMetricsCalculator.calculate()` called directly with zero `regime-segmenter` involvement, read-only against `data/intel/` (default window starts 2026-05-31, not RESEARCH's aspirational 2026-05-23, since reaching it would require a write this execution's constraints forbid). `strategy backtest` ships as the ninth and final CLI subcommand. `docs/M2-05_BACKTEST_GAP.md` records the structural per-regime gap (`REGIMES` ends 2025-12-31 vs substrate starting 2026-05-23/05-31), why fetching PM history doesn't rescue it, and both unlock paths. Real run (`--start 2026-08-15 --end 2026-08-19`, 803.0s, all four types): combined Sharpe -5.01 **FAIL**, MaxDD -1.7% PASS, overall FAIL — recorded honestly per the plan's own instruction, not tuned. The literal 20-day acceptance command was abandoned twice after live, confirmed Yahoo Finance IP-level rate-limiting (`curl` → `HTTP/2 429`) made per-ticker fetches stall for minutes inside the long-running CLI process even though the same ticker fetched standalone succeeded in under 300ms; logged to `deferred-items.md` item 2 for 11-08's own full-default-window re-run. 174 vitest cases green (162 in `src/strategy`, full suite 577/577); `pnpm tsc --noEmit` clean. See 11-06-SUMMARY.md. |
+| 2026-08-28 | Plan 11-07 | Minimal `/strategy` web route + three `/api/strategy/*` endpoints landed (commits 4ce4046, 753e4e6) and operator-approved after a checkpoint that found and fixed two bugs. `src/web/server.ts` gains `GET /api/strategy/candidates` (reads persisted `candidates-*.jsonl`, never re-runs the engine — T-11-07-05), `POST .../:id/accept` and `.../skip`, all three registered post-auth-middleware inheriting `/api/monitoring/*`'s access level (T-11-07-01), `StrategyAcceptSchema`/`StrategySkipSchema` Zod validation with a hard 2x-regime-size `sizeUsd` cap (T-11-07-02), and calling the exact `DecisionLog.recordAccept`/`recordSkip` the CLI calls. `web/frontend/src/pages/StrategyPage.tsx` (509 lines, new) renders VIX/regime header, ranked/sub-threshold/shadow sections with full untruncated rationale, inline editable accept/skip, and D-14's honest empty state. Checkpoint found the page unusable on first load (react-router "Throttling navigation" + HTTP 429 flood) — diagnosed as a pre-existing `TabRouteSync` ping-pong (also looped `/discovery` before 11-07 existed) fixed via a `useRef` URL-origin flag (commit 2eb7a32), and a `list-candidates` decisions-lookup bug that only read the candidate's own day instead of `[dateIso, today]` (commit b58d200). Operator then completed the real round-trip: accepted the NVDA CATALYST_ANCHORED candidate with an edited entry (213.05), verified on disk in `decisions-2026-08-28.jsonl` and via `list-candidates --date 2026-08-26` → `[accepted]`. 578/578 vitest green, `pnpm tsc --noEmit` clean. `skippedTypes` in the GET response is always `[]` today (not persisted by the engine) — logged to `deferred-items.md` item 3. See 11-07-SUMMARY.md. |
 
 ---
 
@@ -147,6 +148,7 @@ current_phase_name: ai-strategy
 - [Phase ?]: 11-04: scored-day coverage gate + SENTIMENT_VELOCITY (gated) + FADE_OVERSHOOT (shadow) shipped; live regression confirmed ok:false for 2026-08-15 (inside outage) and ok:true for 2026-06-25 (real scored day) — see 11-04-SUMMARY.md
 - [Phase ?]: 11-05: four-module registry (defaultSignalModules), cross-type ranking (resolveTickerCollisions/rankCandidates), full 8-of-9 strategy CLI (show-substrate, --types, --include-shadow) shipped; verified against real data/intel — 5 ranked CATALYST_ANCHORED, SENTIMENT_VELOCITY correctly gated off, 12 FADE_OVERSHOOT shadow entries never sized — see 11-05-SUMMARY.md
 - [Phase ?]: 11-06: live-window backtest gate (D-15) shipped end-to-end; docs/M2-05_BACKTEST_GAP.md records the structural per-regime gap; real 5-day live run recorded combined Sharpe -5.01 (FAIL, thin-sample) after live Yahoo Finance rate-limiting made the full 20-day/90-day windows impractical this session — see 11-06-SUMMARY.md
+- [Phase ?]: 11-07: minimal /strategy web route + three /api/strategy/* endpoints shipped, operator-approved after checkpoint fixed a pre-existing React Router tab/URL ping-pong (also fixed a /discovery deep-link loop) and a list-candidates decisions date-window bug; real accept round-tripped to decisions-2026-08-28.jsonl on disk — see 11-07-SUMMARY.md
 
 ### 2026-05-31: Plan 10-06 — Scheduled Digest Delivery + Break-Glass (Replacing M2-03 Bare 4-Cap)
 
@@ -575,9 +577,10 @@ This was the explicit acceptance fixture for M2-04 and it passes. The data subst
 | Phase 11 P04 | 45min | 3 tasks | 6 files |
 | Phase 11 P05 | 45min | 3 tasks | 5 files |
 | Phase 11 P06 | 55min | 3 tasks | 7 files |
+| Phase 11 P07 | ~2h10min | 3 tasks | 9 files |
 
 ## Session
 
-**Last session:** 2026-08-28T15:54:38.800Z
-**Stopped at:** Completed 11-06-PLAN.md
+**Last session:** 2026-08-28T20:01:54.835Z
+**Stopped at:** Completed 11-07-PLAN.md
 **Resume file:** None
