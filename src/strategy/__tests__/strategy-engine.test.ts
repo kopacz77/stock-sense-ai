@@ -563,6 +563,63 @@ describe("StrategyEngine — per-ticker market-data fetch isolation (CR-01)", ()
   });
 });
 
+describe("StrategyEngine — degenerate levels demotion (WR-01)", () => {
+  const asOfDate = new Date("2026-06-25T00:00:00.000Z");
+
+  /** Returns zero bars for one specific ticker (insufficient history for ATR), real bars for every other. */
+  class InsufficientHistoryMarketData implements MarketDataSource {
+    constructor(private readonly thinTicker: string) {}
+    async fetchHistoricalData(
+      symbol: string,
+      _from: Date,
+      to: Date = new Date(),
+    ): Promise<OHLCVData[]> {
+      if (symbol === this.thinTicker) return [];
+      return stubBars(to);
+    }
+  }
+
+  it("a ticker with insufficient bars (ATR collapses to 0) is demoted to sub-threshold, never ranked or sized, with an explicit reason in its rationale", async () => {
+    await writeRollupFixture("2026-06-25", [
+      rollup({ ticker: "THIN" }),
+      rollup({ ticker: "NVDA" }),
+    ]);
+
+    const modules = [
+      makeModule({
+        signalType: "CATALYST_ANCHORED",
+        mode: "core",
+        signals: [
+          makeRaw({ signalType: "CATALYST_ANCHORED", ticker: "THIN", score: 0.95, direction: "long" }),
+          makeRaw({ signalType: "CATALYST_ANCHORED", ticker: "NVDA", score: 0.5, direction: "long" }),
+        ],
+      }),
+    ];
+
+    const engine = new StrategyEngine({
+      intelDataDir,
+      strategyDataDir,
+      modules,
+      config: baseConfig(),
+      vixProvider: new StubVixProvider(),
+      marketData: new InsufficientHistoryMarketData("THIN"),
+    });
+
+    const result = await engine.generateCandidates(asOfDate);
+
+    // Despite scoring highest (0.95), THIN never ranks and is never sized.
+    expect(result.ranked.some((c) => c.ticker === "THIN")).toBe(false);
+    expect(result.ranked[0]?.ticker).toBe("NVDA");
+
+    const demoted = result.subThreshold.find((c) => c.ticker === "THIN");
+    expect(demoted).toBeDefined();
+    expect(demoted?.suggestedSizeUsd).toBeNull();
+    expect(demoted?.suggestedEntry).toBe(demoted?.suggestedTarget);
+    expect(demoted?.suggestedEntry).toBe(demoted?.suggestedStop);
+    expect(demoted?.rationale).toContain("degenerate levels");
+  });
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // Task 2: cross-type ranking — collisions, floor, top-5, next-3, honest empty
 // ───────────────────────────────────────────────────────────────────────────

@@ -20,7 +20,9 @@
  *      `StrategyRunResult.skippedTickers` and that ticker's raw signals are
  *      dropped, never aborting the whole run (CR-01)
  *   7. computes entry/target/stop (levels.ts) for every candidate,
- *      including shadow ones
+ *      including shadow ones — a candidate whose levels collapsed (zero/
+ *      insufficient ATR) is demoted to sub-threshold with an explicit
+ *      reason rather than ranked/sized (WR-01, see `hasDegenerateLevels`)
  *   8. partitions `mode: "shadow"` modules' candidates out of ranking
  *      entirely (D-01) — they always land in `StrategyRunResult.shadow`
  *      with `suggestedSizeUsd: null`, never in `ranked`/`subThreshold`
@@ -236,6 +238,22 @@ export function rankCandidates(
   return { ranked, subThreshold };
 }
 
+/**
+ * A candidate's computed levels are un-priceable when the ATR that fed
+ * `computeLevels` was zero/insufficient (a thin ticker, a recently-listed
+ * symbol, or a short-but-non-throwing bar set) — the stop/target clamps in
+ * `levels.ts` then collapse to `entry === target` or `entry === stop`
+ * (WR-01). A degenerate candidate must never be ranked or sized; the
+ * caller demotes it to `subThreshold` with an explicit reason instead.
+ */
+export function hasDegenerateLevels(candidate: StrategyCandidate): boolean {
+  return (
+    candidate.atrValue <= 0 ||
+    candidate.suggestedTarget === candidate.suggestedEntry ||
+    candidate.suggestedStop === candidate.suggestedEntry
+  );
+}
+
 export class StrategyEngine {
   private readonly intelDataDir: string;
   private readonly strategyDataDir: string;
@@ -380,12 +398,27 @@ export class StrategyEngine {
 
     // Shadow-mode modules' candidates bypass ranking structurally — a
     // shadow candidate never competes for a ranked/sub-threshold slot no
-    // matter how high its score (D-01, T-11-05-01).
+    // matter how high its score (D-01, T-11-05-01). A candidate whose
+    // computed levels collapsed (zero/insufficient ATR, or an entry that
+    // equals its own target/stop) is un-priceable and is demoted straight
+    // to sub-threshold with an explicit reason instead — never silently
+    // ranked/sized with a zero-distance stop (WR-01).
     const shadow: StrategyCandidate[] = [];
     const rankable: StrategyCandidate[] = [];
+    const degenerate: StrategyCandidate[] = [];
     for (const candidate of allCandidates) {
       if (modeByType.get(candidate.signalType) === "shadow") {
         shadow.push({ ...candidate, mode: "shadow" as CandidateMode, suggestedSizeUsd: null });
+      } else if (hasDegenerateLevels(candidate)) {
+        degenerate.push({
+          ...candidate,
+          mode: "sub-threshold" as CandidateMode,
+          suggestedSizeUsd: null,
+          rationale:
+            `${candidate.rationale} (demoted: degenerate levels — atrValue=${candidate.atrValue}, ` +
+            `entry=${candidate.suggestedEntry}, target=${candidate.suggestedTarget}, ` +
+            `stop=${candidate.suggestedStop}; insufficient price history to size this trade safely)`,
+        });
       } else {
         rankable.push(candidate);
       }
@@ -405,11 +438,14 @@ export class StrategyEngine {
         c.sizeModifier ?? 1,
       ),
     }));
-    const subThreshold: StrategyCandidate[] = subThresholdRaw.map((c) => ({
-      ...c,
-      mode: "sub-threshold" as CandidateMode,
-      suggestedSizeUsd: null,
-    }));
+    const subThreshold: StrategyCandidate[] = [
+      ...subThresholdRaw.map((c) => ({
+        ...c,
+        mode: "sub-threshold" as CandidateMode,
+        suggestedSizeUsd: null,
+      })),
+      ...degenerate,
+    ];
 
     const toPersist = [...ranked, ...subThreshold, ...shadow];
     if (toPersist.length > 0) {
