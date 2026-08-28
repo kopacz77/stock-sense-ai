@@ -45,7 +45,7 @@ pnpm intel backlog-drain --manage-server # starts the server if down, drains,
 - The command holds `data/intel/score-backlog.lock`; the scheduler skips its
   in-cycle drain while the lock is fresh (< 2 h), so both can run at once.
   Fresh-article scoring in the scheduler still runs and shares the GPU.
-- `lms` lookup: `LMS_BIN` env, else `/mnt/c/Users/*/.lmstudio/bin/lms.exe`.
+- `lms` lookup: `LMS_BIN` env, else `/mnt/c/Users/*/.lmstudio/bin/lms.exe`. Bind address is left to LM Studio's own setting (the server must be reachable from WSL2, which rules out host loopback in NAT mode — that is an unauthenticated LAN-visible endpoint, so keep the machine on a trusted network); set `LMS_BIND` to override.
 
 The scheduler resumes scoring on its own the moment the endpoint answers —
 no restart needed (a new client is built every cycle).

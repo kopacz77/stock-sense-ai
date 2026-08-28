@@ -58,7 +58,15 @@ export async function ensureServerUp(
 ): Promise<{ started: boolean }> {
   if (await endpointUp(endpoint)) return { started: false };
   const port = new URL(endpoint).port || "1234";
-  await lms(bin, ["server", "start", "--port", port, "--bind", "0.0.0.0"]);
+  // Bind address is deliberately NOT forced to 0.0.0.0 here: LM Studio keeps
+  // its own "serve on local network" setting, and the operator already chose
+  // it (WSL2 in NAT mode cannot reach the Windows host's loopback, so the
+  // server must listen on the host's LAN/vEthernet address for this project
+  // to work at all — an unauthenticated endpoint the whole LAN can see).
+  // Leave that choice with LM Studio's config; `LMS_BIND` overrides when set.
+  const args = ["server", "start", "--port", port];
+  if (process.env.LMS_BIND) args.push("--bind", process.env.LMS_BIND);
+  await lms(bin, args);
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     if (await endpointUp(endpoint)) return { started: true };
