@@ -24,6 +24,8 @@ import type { MarketSnapshot } from "../polymarket/types.js";
 // M2-04 signal layer wiring
 import { ArticleScorer, type ScoringContext } from "../signal/article-scorer.js";
 import { ScoreBacklog } from "../signal/score-backlog.js";
+import { isDrainLocked, persistDrainedRecords } from "../signal/backlog-drain.js";
+import { rebuildRollupForDay } from "../signal/rollup-backfill.js";
 import { PmMappingEngine } from "../signal/pm-mapping-engine.js";
 import { CatalystRefiner } from "../signal/catalyst-refiner.js";
 import { RollupBuilder } from "../signal/rollup-builder.js";
@@ -238,6 +240,16 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
   if (options.llm) {
     try {
       scoringResult = await runArticleScoring(articles, options, dataDir);
+      // Loud, greppable signal for the failure mode that went unnoticed for a
+      // month (2026-07-26 → 08-27): LM Studio down, every article backlogged,
+      // digests still flowing. The digest's scorer-health line is the
+      // operator-facing counterpart.
+      if (scoringResult.scored.length === 0 && scoringResult.backlogged > 0) {
+        console.warn(
+          `[cycle-runner] SCORER DOWN: 0 scored, ${scoringResult.backlogged} backlogged this cycle ` +
+            `(backlog=${scoringResult.backlogSize}). Is LM Studio running at ${options.llm.endpoint}?`,
+        );
+      }
     } catch (err) {
       console.warn(
         `[cycle-runner] article scoring failed (continuing without scored records): ${
@@ -515,17 +527,38 @@ async function runArticleScoring(
   }
 
   // Drain backlog LAST so fresh articles aren't starved (RESEARCH pitfall #5).
+  // Skipped while `intel backlog-drain` holds the lock — both rewrite the
+  // backlog file whole, so a concurrent drain would lose entries.
   const drainCap = options.backlogDrainCap ?? 50;
-  try {
-    const drainResult = await backlog.drain(scorer, baseContext, drainCap);
-    if (drainResult.scoredRecords.length > 0) {
-      await scoredStore.appendMany(drainResult.scoredRecords);
+  if (await isDrainLocked(dataDir)) {
+    console.warn("[cycle-runner] backlog drain skipped: intel backlog-drain holds the lock");
+  } else {
+    try {
+      const drainResult = await backlog.drain(scorer, baseContext, drainCap);
+      // Drained articles may be days old: write each record into its article's
+      // publish-day file (not today's) and rebuild those days' rollups so the
+      // day's TickerDaySummary picks the articles up. Today is rebuilt by
+      // step 3.9 anyway.
+      const touched = await persistDrainedRecords(dataDir, drainResult);
+      const todayIso = today.toISOString().split("T")[0]!;
+      for (const day of touched) {
+        if (day === todayIso) continue;
+        try {
+          await rebuildRollupForDay(dataDir, day);
+        } catch (err) {
+          console.warn(
+            `[cycle-runner] rollup rebuild for back-scored day ${day} failed: ${
+              err instanceof Error ? err.message : err
+            }`,
+          );
+        }
+      }
+      scored.push(...drainResult.scoredRecords);
+    } catch (err) {
+      console.warn(
+        `[cycle-runner] backlog drain failed: ${err instanceof Error ? err.message : err}`,
+      );
     }
-    scored.push(...drainResult.scoredRecords);
-  } catch (err) {
-    console.warn(
-      `[cycle-runner] backlog drain failed: ${err instanceof Error ? err.message : err}`,
-    );
   }
 
   const backlogSize = await backlog.size();

@@ -12,6 +12,7 @@
     "build:frontend": "cd web/frontend && npm run build",
     "build:all": "pnpm build && pnpm build:frontend && mkdir -p web/public && cp -r web/frontend/dist/* web/public/",
     "dev": "tsx src/index.ts",
+    "intel": "tsx src/index.ts intel",
     "dev:backend": "tsx watch src/index.ts dashboard --port 3001",
     "dev:frontend": "cd web/frontend && npm run dev",
     "dev:all": "concurrently -n \"API,WEB\" -c \"blue,green\" \"pnpm dev:backend\" \"pnpm dev:frontend\"",

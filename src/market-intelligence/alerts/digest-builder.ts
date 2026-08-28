@@ -19,6 +19,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import { ScoreBacklog } from "../signal/score-backlog.js";
 import { JsonlStore } from "../storage/jsonl-store.js";
 import type { NewsArticle } from "../news/types.js";
 import type { MarketSnapshot } from "../polymarket/types.js";
@@ -26,6 +27,7 @@ import type {
   CatalystFlag,
   DigestPayload,
   ScoredArticle,
+  ScorerHealth,
 } from "../signal/types.js";
 
 export interface DigestBuilderOptions {
@@ -93,6 +95,10 @@ export class DigestBuilder {
     const pmMovers =
       flavor === "MORNING" ? undefined : await this.loadPmMovers(now, 2);
 
+    // 4) Scorer health — heartbeat for the LLM layer. Never throws: a digest
+    //    must still go out if the backlog file is unreadable.
+    const scorerHealth = await this.loadScorerHealth(now).catch(() => undefined);
+
     const payload: DigestPayload = {
       flavor,
       builtAt: now.toISOString(),
@@ -100,7 +106,55 @@ export class DigestBuilder {
       upcomingCalendar,
     };
     if (pmMovers !== undefined) payload.pmMovers = pmMovers;
+    if (scorerHealth !== undefined) payload.scorerHealth = scorerHealth;
     return payload;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Internal: scorer health
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private async loadScorerHealth(now: Date): Promise<ScorerHealth> {
+    const backlog = new ScoreBacklog({ dataDir: this.dataDir });
+    const backlogSize = await backlog.size();
+    const oldestMs = await backlog.oldestAgeMs();
+    // oldestAgeMs is relative to wall-clock; re-base to `now` for testability.
+    const oldestBacklogAgeHours =
+      oldestMs === null ? null : (oldestMs - (Date.now() - now.getTime())) / (60 * 60 * 1000);
+
+    const lastScoredAt = await this.findLastScoredAt();
+    const lastMs = lastScoredAt === null ? null : Date.parse(lastScoredAt);
+    const scoredRecently =
+      lastMs !== null && Number.isFinite(lastMs) && now.getTime() - lastMs <= 24 * 60 * 60 * 1000;
+
+    return {
+      backlogSize,
+      oldestBacklogAgeHours,
+      lastScoredAt,
+      healthy: backlogSize === 0 || scoredRecently,
+    };
+  }
+
+  /** Newest `scoredAt` across scored-articles files (newest file only — files are day-named). */
+  private async findLastScoredAt(): Promise<string | null> {
+    const files = await fs.readdir(this.dataDir).catch(() => [] as string[]);
+    const newest = files
+      .filter((f) => /^scored-articles-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
+      .sort()
+      .pop();
+    if (newest === undefined) return null;
+    const raw = await fs.readFile(path.join(this.dataDir, newest), "utf8").catch(() => "");
+    let best: string | null = null;
+    for (const line of raw.split("\n")) {
+      if (line.trim().length === 0) continue;
+      try {
+        const ts = (JSON.parse(line) as { scoredAt?: string }).scoredAt;
+        if (ts !== undefined && (best === null || ts > best)) best = ts;
+      } catch {
+        /* skip malformed line */
+      }
+    }
+    return best;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -381,7 +435,37 @@ export function renderDigestMarkdown(p: DigestPayload): string {
     }
   }
 
+  // Scorer health — always rendered so silence is itself a signal.
+  if (p.scorerHealth) {
+    lines.push("", renderScorerHealth(p.scorerHealth, p.builtAt));
+  }
+
   return lines.join("\n");
+}
+
+function renderScorerHealth(h: ScorerHealth, builtAt: string): string {
+  const nowMs = Date.parse(builtAt);
+  const lastAgo =
+    h.lastScoredAt === null
+      ? "never"
+      : `${hoursLabel((nowMs - Date.parse(h.lastScoredAt)) / (60 * 60 * 1000))} ago`;
+  const backlogPart =
+    h.oldestBacklogAgeHours === null
+      ? `backlog ${h.backlogSize}`
+      : `backlog ${h.backlogSize} (oldest ${hoursLabel(h.oldestBacklogAgeHours)})`;
+  if (h.healthy) {
+    return `_Scorer ok — ${backlogPart}, last scored ${lastAgo}_`;
+  }
+  return (
+    `⚠️ *Scorer down* — ${backlogPart}, last scored ${lastAgo}. ` +
+    `Start LM Studio, then \`pnpm intel backlog-drain\`.`
+  );
+}
+
+function hoursLabel(hours: number): string {
+  if (!Number.isFinite(hours) || hours < 0) return "?";
+  if (hours < 48) return `${hours.toFixed(hours < 10 ? 1 : 0)}h`;
+  return `${(hours / 24).toFixed(0)}d`;
 }
 
 function escapeMd(s: string): string {

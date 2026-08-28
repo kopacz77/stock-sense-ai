@@ -20,6 +20,9 @@ import { ArticleScorer, type ScoringContext } from "../signal/article-scorer.js"
 import { CalendarRefresher } from "../signal/calendar/index.js";
 import { runStabilityTest } from "../signal/stability-test.js";
 import { backfillMissingRollups } from "../signal/rollup-backfill.js";
+import { drainBacklog, releaseDrainLock } from "../signal/backlog-drain.js";
+import { ScoreBacklog } from "../signal/score-backlog.js";
+import { endpointUp, ensureServerUp, findLms, shutdownServer } from "./lm-studio-control.js";
 import type { CalendarEvent, PmMappingProposal, TickerDaySummary } from "../signal/types.js";
 import type { NewsArticle } from "../news/types.js";
 import {
@@ -466,12 +469,15 @@ export function registerIntelCommands(program: Command): void {
         dataDir: DATA_DIR,
       });
 
-      const printResult = (label: string, r: { articles: number; relevantMarkets: number; alerts: { length: number }; alertsSent: number; correlator: string; llmUsedUsd: number; durationMs: number }) => {
+      const printResult = (label: string, r: { articles: number; relevantMarkets: number; alerts: { length: number }; alertsSent: number; correlator: string; llmUsedUsd: number; durationMs: number; scoredArticles: number; backloggedArticles: number; backlogSize: number }) => {
         const at = new Date().toLocaleString();
+        // scored/backlog are on the line so a dead scorer is visible in the
+        // journal without grepping for warnings.
         console.log(
           chalk.cyan(`[${at}] ${label}`) +
             chalk.gray(
               ` articles=${r.articles} markets=${r.relevantMarkets} alerts=${r.alerts.length} sent=${r.alertsSent} via=${r.correlator}` +
+                ` scored=${r.scoredArticles} backlogged=${r.backloggedArticles} backlog=${r.backlogSize}` +
                 (r.llmUsedUsd > 0 ? ` cost=$${r.llmUsedUsd.toFixed(4)}` : "") +
                 ` (${r.durationMs}ms)`,
             ),
@@ -727,6 +733,132 @@ export function registerIntelCommands(program: Command): void {
         return;
       }
       console.log(JSON.stringify(match, null, 2));
+    });
+
+  intel
+    .command("backlog-drain")
+    .description(
+      "Score every article queued in score-backlog.jsonl (LLM was down), filing each into its publish day and rebuilding those days' rollups",
+    )
+    .option("--max <n>", "Stop after N articles (default: drain everything)")
+    .option("--batch <n>", "Articles per batch", "50")
+    .option(
+      "--manage-server",
+      "Start LM Studio's server via `lms` if the endpoint is down, and unload the model + stop it when done (frees RAM)",
+      false,
+    )
+    .action(async (opts: { max?: string; batch: string; manageServer: boolean }) => {
+      await ensureConfig();
+      const llm = resolveLlmConfig();
+      const max = opts.max === undefined ? undefined : Number(opts.max);
+      const batchSize = Number(opts.batch);
+      if ((max !== undefined && (!Number.isFinite(max) || max <= 0)) || !Number.isFinite(batchSize) || batchSize <= 0) {
+        console.error("--max and --batch must be positive numbers.");
+        process.exit(2);
+      }
+
+      const backlog = new ScoreBacklog({ dataDir: DATA_DIR });
+      const size = await backlog.size();
+      if (size === 0) {
+        console.log(chalk.green("Backlog is empty — nothing to drain."));
+        return;
+      }
+      const oldest = await backlog.oldestAgeMs();
+      console.log(
+        chalk.cyan(`Backlog: ${size} article(s), oldest ${oldest === null ? "?" : (oldest / 3_600_000 / 24).toFixed(1)}d. ` +
+          `Endpoint ${llm.endpoint} (${llm.model}).`),
+      );
+
+      // Optional LM Studio lifecycle ("as needed" mode — model holds ~9 GB RAM).
+      let lmsBin: string | null = null;
+      let weStartedIt = false;
+      if (opts.manageServer) {
+        lmsBin = await findLms();
+        if (lmsBin === null) {
+          console.error("--manage-server: `lms` not found (set LMS_BIN or install LM Studio's CLI).");
+          process.exit(2);
+        }
+        const spinner = ora("Ensuring LM Studio server is up...").start();
+        try {
+          weStartedIt = (await ensureServerUp(lmsBin, llm.endpoint)).started;
+          spinner.succeed(weStartedIt ? "LM Studio server started." : "LM Studio server already up.");
+        } catch (err) {
+          spinner.fail(err instanceof Error ? err.message : String(err));
+          process.exit(2);
+        }
+      } else if (!(await endpointUp(llm.endpoint))) {
+        console.error(
+          chalk.red(`LLM endpoint ${llm.endpoint} is not answering. Start LM Studio (or pass --manage-server).`),
+        );
+        process.exit(2);
+      }
+
+      const scorer = new ArticleScorer({ endpoint: llm.endpoint, model: llm.model, apiKey: llm.apiKey });
+      const watchlist = await loadWatchlist();
+      const macro = await loadMacroTickers();
+      const ctx: ScoringContext = {
+        canonicalThemes: await loadCanonicalThemes(),
+        upcomingEvents: await loadAllUpcomingCalendarEvents(14),
+        tickerUniverse: Array.from(new Set([...watchlist, ...macro])),
+      };
+
+      // Ctrl-C: finish the current batch, then stop and rebuild rollups.
+      // Second Ctrl-C: drop the lock and exit immediately.
+      const ac = new AbortController();
+      const onSigint = () => {
+        if (ac.signal.aborted) {
+          console.log(chalk.yellow("\nForced exit — releasing lock."));
+          void releaseDrainLock(DATA_DIR).finally(() => process.exit(130));
+          return;
+        }
+        console.log(chalk.yellow("\nStopping after the current batch (Ctrl-C again to force)..."));
+        ac.abort();
+      };
+      process.on("SIGINT", onSigint);
+
+      const t0 = Date.now();
+      const spinner = ora(`Draining (batch ${batchSize})...`).start();
+      try {
+        const result = await drainBacklog({
+          dataDir: DATA_DIR,
+          scorer,
+          context: ctx,
+          batchSize,
+          signal: ac.signal,
+          ...(max !== undefined ? { max } : {}),
+          onBatch: (b) => {
+            const perArticle = b.scored > 0 ? (b.ms / b.scored / 1000).toFixed(1) : "?";
+            const etaMin = b.scored > 0 ? ((b.remaining * (b.ms / b.scored)) / 60_000).toFixed(0) : "?";
+            spinner.text = `scored ${b.totalScored} · remaining ${b.remaining} · ${perArticle}s/article · ~${etaMin} min left`;
+          },
+        });
+        const mins = ((Date.now() - t0) / 60_000).toFixed(1);
+        const why = {
+          empty: "backlog empty",
+          max: `--max ${max} reached`,
+          failure: `stopped on failure: ${result.lastError ?? "unknown"}`,
+          aborted: "interrupted",
+        }[result.stoppedBecause];
+        (result.stoppedBecause === "failure" ? spinner.fail : spinner.succeed).call(
+          spinner,
+          `Scored ${result.scored} in ${mins} min — ${why}. ${result.remaining} remaining.`,
+        );
+        if (result.rollupsRebuilt.length > 0) {
+          console.log(chalk.green(`Rebuilt ${result.rollupsRebuilt.length} rollup day(s): ${result.rollupsRebuilt.sort().join(", ")}`));
+        }
+        for (const f of result.rollupsFailed) {
+          console.error(chalk.red(`Rollup rebuild failed for ${f.date}: ${f.error}`));
+        }
+        if (result.stoppedBecause === "failure") process.exitCode = 1;
+      } finally {
+        process.off("SIGINT", onSigint);
+        if (lmsBin !== null && weStartedIt) {
+          const shutdownSpinner = ora("Unloading model + stopping LM Studio server...").start();
+          const log = await shutdownServer(lmsBin);
+          shutdownSpinner.succeed("LM Studio server stopped.");
+          for (const l of log) console.log(chalk.gray(`  ${l}`));
+        }
+      }
     });
 
   intel

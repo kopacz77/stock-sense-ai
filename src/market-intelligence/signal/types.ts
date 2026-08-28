@@ -248,6 +248,22 @@ export interface DigestPayload {
     movePp: number;
     volume24hr: number;
   }>;
+  /**
+   * Scorer health — always present so the digest doubles as a heartbeat for
+   * the LLM layer (the scheduler keeps sending digests when LM Studio is down).
+   */
+  scorerHealth?: ScorerHealth;
+}
+
+export interface ScorerHealth {
+  /** Entries in score-backlog.jsonl. */
+  backlogSize: number;
+  /** Age in hours of the oldest backlog entry, or null when empty. */
+  oldestBacklogAgeHours: number | null;
+  /** scoredAt of the most recent ScoredArticle on disk, or null if none. */
+  lastScoredAt: string | null;
+  /** True when the backlog is empty or scoring has succeeded within the last 24h. */
+  healthy: boolean;
 }
 
 /**

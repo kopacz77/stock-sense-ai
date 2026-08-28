@@ -59,6 +59,10 @@ export interface DrainResult {
   oldestAgeMs: number | null;
   /** All ScoredArticle records produced across all successful drains this pass. */
   scoredRecords: ScoredArticle[];
+  /** Source articles that scored successfully this drain (their records are in scoredRecords). */
+  scoredArticles: NewsArticle[];
+  /** Message of the failure that stopped the drain, if any. */
+  lastError?: string;
 }
 
 export class ScoreBacklog {
@@ -116,8 +120,10 @@ export class ScoreBacklog {
     // Entries beyond maxN remain regardless of outcome.
     const remaining: ScoreBacklogEntry[] = entries.slice(maxN);
     const scoredRecords: ScoredArticle[] = [];
+    const scoredArticles: NewsArticle[] = [];
     let scored = 0;
     let failed = 0;
+    let lastError: string | undefined;
 
     for (let i = 0; i < slice.length; i++) {
       const entry = slice[i];
@@ -126,11 +132,13 @@ export class ScoreBacklog {
         const ctx: ScoringContext = { ...context, pmContext: entry.pmContext };
         const records = await scorer.scoreArticle(entry.article, ctx);
         scoredRecords.push(...records);
+        scoredArticles.push(entry.article);
         scored += 1;
       } catch (err) {
         failed += 1;
         entry.attempts += 1;
         entry.lastErrorMessage = err instanceof Error ? err.message : String(err);
+        lastError = entry.lastErrorMessage;
         // Push the failed entry + everything we haven't processed yet back into remaining.
         remaining.push(...slice.slice(i));
         // Bail — LLM likely still down for subsequent calls; don't waste the budget.
@@ -140,7 +148,16 @@ export class ScoreBacklog {
 
     await this.writeAll(remaining);
     const oldestAgeMs = this.computeOldestAgeMs(remaining);
-    return { scored, failed, remaining: remaining.length, oldestAgeMs, scoredRecords };
+    const result: DrainResult = {
+      scored,
+      failed,
+      remaining: remaining.length,
+      oldestAgeMs,
+      scoredRecords,
+      scoredArticles,
+    };
+    if (lastError !== undefined) result.lastError = lastError;
+    return result;
   }
 
   /** Current backlog size. */

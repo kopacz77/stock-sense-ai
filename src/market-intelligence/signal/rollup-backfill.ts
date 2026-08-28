@@ -89,8 +89,7 @@ export async function backfillMissingRollups(
     }
     if (cutoffIso !== null && date < cutoffIso) continue;
     try {
-      const pmSignals = await loadPmSignalsForDay(dataDir, date, engine);
-      await builder.buildForDay(new Date(`${date}T12:00:00.000Z`), pmSignals);
+      await rebuildRollupForDay(dataDir, date, engine, builder);
       result.rebuilt.push(date);
     } catch (err) {
       result.failed.push({
@@ -107,7 +106,23 @@ export async function backfillMissingRollups(
  * Re-derive the day's PM ticker signals from the persisted snapshots file.
  * Uses `mapMarket` (no proposal persistence). Missing snapshots file → [].
  */
-async function loadPmSignalsForDay(
+/**
+ * Rebuild one day's ticker-day-summary from its persisted scored-articles and
+ * polymarket-snapshots. Unlike `backfillMissingRollups`, this rebuilds even when
+ * a rollup already exists — used after back-scoring old articles into a day
+ * whose rollup was built while the scorer was down (articleCount: 0).
+ */
+export async function rebuildRollupForDay(
+  dataDir: string,
+  date: string,
+  engine: PmMappingEngine = new PmMappingEngine({ dataDir }),
+  builder: RollupBuilder = new RollupBuilder({ dataDir }),
+): Promise<void> {
+  const pmSignals = await loadPmSignalsForDay(dataDir, date, engine);
+  await builder.buildForDay(new Date(`${date}T12:00:00.000Z`), pmSignals);
+}
+
+export async function loadPmSignalsForDay(
   dataDir: string,
   date: string,
   engine: PmMappingEngine,

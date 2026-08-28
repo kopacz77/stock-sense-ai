@@ -28,9 +28,18 @@ export class JsonlStore<T extends object> {
   }
 
   async appendMany(records: T[]): Promise<void> {
+    await this.appendManyOn(records, new Date());
+  }
+
+  /**
+   * Append records to the file for a specific calendar day (UTC) instead of
+   * today. Used when back-scoring old articles so a record lands in the day
+   * it belongs to (its article's publish day), not the day it was scored.
+   */
+  async appendManyOn(records: T[], date: Date): Promise<void> {
     if (records.length === 0) return;
     await fs.mkdir(this.dir, { recursive: true });
-    const file = this.fileFor(new Date());
+    const file = this.fileFor(date);
     const lines = records.map((r) => JSON.stringify(r)).join("\n");
     await fs.appendFile(file, `${lines}\n`, "utf8");
   }
