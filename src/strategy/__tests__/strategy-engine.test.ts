@@ -502,6 +502,67 @@ describe("StrategyEngine — module failure isolation", () => {
   });
 });
 
+describe("StrategyEngine — per-ticker market-data fetch isolation (CR-01)", () => {
+  const asOfDate = new Date("2026-06-25T00:00:00.000Z");
+
+  /** Throws for one specific ticker (all providers exhausted), returns real bars for every other. */
+  class PartiallyFailingMarketData implements MarketDataSource {
+    constructor(private readonly failingTicker: string) {}
+    async fetchHistoricalData(
+      symbol: string,
+      _from: Date,
+      to: Date = new Date(),
+    ): Promise<OHLCVData[]> {
+      if (symbol === this.failingTicker) {
+        throw new Error("Alpha Vantage, Finnhub, and Yahoo Finance all failed for " + symbol);
+      }
+      return stubBars(to);
+    }
+  }
+
+  it("one ticker's fetchHistoricalData throw does not abort the run — the other tickers' candidates survive", async () => {
+    await writeRollupFixture("2026-06-25", [
+      rollup({ ticker: "AAA" }),
+      rollup({ ticker: "BBB" }),
+    ]);
+
+    const modules = [
+      makeModule({
+        signalType: "CATALYST_ANCHORED",
+        mode: "core",
+        signals: [
+          makeRaw({ signalType: "CATALYST_ANCHORED", ticker: "AAA", score: 0.9, direction: "long" }),
+          makeRaw({ signalType: "CATALYST_ANCHORED", ticker: "BBB", score: 0.8, direction: "long" }),
+        ],
+      }),
+    ];
+
+    const engine = new StrategyEngine({
+      intelDataDir,
+      strategyDataDir,
+      modules,
+      config: baseConfig(),
+      vixProvider: new StubVixProvider(),
+      marketData: new PartiallyFailingMarketData("AAA"),
+    });
+
+    const result = await engine.generateCandidates(asOfDate);
+
+    // The run completes instead of throwing.
+    expect(result.skippedTickers).toHaveLength(1);
+    expect(result.skippedTickers[0]?.ticker).toBe("AAA");
+    expect(result.skippedTickers[0]?.reason).toContain("Alpha Vantage");
+
+    // AAA's candidate is dropped entirely; BBB's survives and ranks normally.
+    const allTickers = [...result.ranked, ...result.subThreshold, ...result.shadow].map(
+      (c) => c.ticker,
+    );
+    expect(allTickers).not.toContain("AAA");
+    expect(result.ranked).toHaveLength(1);
+    expect(result.ranked[0]?.ticker).toBe("BBB");
+  });
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // Task 2: cross-type ranking — collisions, floor, top-5, next-3, honest empty
 // ───────────────────────────────────────────────────────────────────────────

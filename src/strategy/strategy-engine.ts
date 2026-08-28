@@ -14,7 +14,11 @@
  *      gate or a thrown `generate()` both become a `skippedTypes` entry
  *      rather than aborting the run
  *   5. fetches the VIX quote once
- *   6. fetches ATR inputs per surviving ticker via `MarketDataService`
+ *   6. fetches ATR inputs per surviving ticker via `MarketDataService` — a
+ *      per-ticker fetch failure (all providers exhausted) is isolated the
+ *      same way a `generate()` throw is: recorded in
+ *      `StrategyRunResult.skippedTickers` and that ticker's raw signals are
+ *      dropped, never aborting the whole run (CR-01)
  *   7. computes entry/target/stop (levels.ts) for every candidate,
  *      including shadow ones
  *   8. partitions `mode: "shadow"` modules' candidates out of ranking
@@ -301,63 +305,78 @@ export class StrategyEngine {
     const tickers = Array.from(new Set(rawSignals.map((s) => s.ticker)));
     const atrByTicker = new Map<string, Record<3 | 5 | 10, number>>();
     const closeByTicker = new Map<string, number>();
+    const skippedTickers: StrategyRunResult["skippedTickers"] = [];
 
     for (const ticker of tickers) {
       const from = new Date(asOfDate.getTime() - ATR_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-      const bars = await this.marketData.fetchHistoricalData(ticker, from, asOfDate);
+      try {
+        const bars = await this.marketData.fetchHistoricalData(ticker, from, asOfDate);
 
-      // Bars may arrive newest-first (Yahoo) or already ascending depending
-      // on provider/cache path — sort ascending explicitly rather than
-      // trust the caller's order (strategy-adapter.ts doc-comment
-      // discipline: state the order, don't bare-.reverse()).
-      const ascending = [...bars].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
-      const priceData = {
-        open: ascending.map((b) => b.open),
-        high: ascending.map((b) => b.high),
-        low: ascending.map((b) => b.low),
-        close: ascending.map((b) => b.close),
-        volume: ascending.map((b) => b.volume),
-      };
+        // Bars may arrive newest-first (Yahoo) or already ascending depending
+        // on provider/cache path — sort ascending explicitly rather than
+        // trust the caller's order (strategy-adapter.ts doc-comment
+        // discipline: state the order, don't bare-.reverse()).
+        const ascending = [...bars].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+        const priceData = {
+          open: ascending.map((b) => b.open),
+          high: ascending.map((b) => b.high),
+          low: ascending.map((b) => b.low),
+          close: ascending.map((b) => b.close),
+          volume: ascending.map((b) => b.volume),
+        };
 
-      const atrByPeriod = {} as Record<3 | 5 | 10, number>;
-      for (const period of ATR_PERIODS) {
-        const series = TechnicalIndicators.calculateATRSeries(priceData, period);
-        atrByPeriod[period] = series[series.length - 1] ?? 0;
+        const atrByPeriod = {} as Record<3 | 5 | 10, number>;
+        for (const period of ATR_PERIODS) {
+          const series = TechnicalIndicators.calculateATRSeries(priceData, period);
+          atrByPeriod[period] = series[series.length - 1] ?? 0;
+        }
+        atrByTicker.set(ticker, atrByPeriod);
+        closeByTicker.set(ticker, ascending[ascending.length - 1]?.close ?? 0);
+      } catch (err) {
+        // One ticker's market-data outage (all providers exhausted) must
+        // not cost the operator every other ticker's candidates for the
+        // day (CR-01) — record it the same way a skipped signal type is
+        // recorded and exclude only this ticker's raw signals below,
+        // rather than letting the exception propagate out of
+        // generateCandidates.
+        const message = err instanceof Error ? err.message : String(err);
+        skippedTickers.push({ ticker, reason: `fetchHistoricalData threw: ${message}` });
       }
-      atrByTicker.set(ticker, atrByPeriod);
-      closeByTicker.set(ticker, ascending[ascending.length - 1]?.close ?? 0);
     }
 
+    const skippedTickerSet = new Set(skippedTickers.map((s) => s.ticker));
     const generatedAt = new Date().toISOString();
 
-    const allCandidates: StrategyCandidate[] = rawSignals.map((raw) => {
-      const close = closeByTicker.get(raw.ticker) ?? 0;
-      const atrByPeriod = atrByTicker.get(raw.ticker) ?? { 3: 0, 5: 0, 10: 0 };
-      const levels = computeLevels({
-        close,
-        direction: raw.direction,
-        atrByPeriod,
-        entryStyle: raw.entryStyle,
-        targetSpec: raw.targetSpec,
-      });
+    const allCandidates: StrategyCandidate[] = rawSignals
+      .filter((raw) => !skippedTickerSet.has(raw.ticker))
+      .map((raw) => {
+        const close = closeByTicker.get(raw.ticker) ?? 0;
+        const atrByPeriod = atrByTicker.get(raw.ticker) ?? { 3: 0, 5: 0, 10: 0 };
+        const levels = computeLevels({
+          close,
+          direction: raw.direction,
+          atrByPeriod,
+          entryStyle: raw.entryStyle,
+          targetSpec: raw.targetSpec,
+        });
 
-      return {
-        ...raw,
-        candidateId: buildCandidateId(asOfIso, raw.signalType, raw.ticker, raw.score, generatedAt),
-        generatedAt,
-        asOfDate: asOfIso,
-        mode: "sub-threshold" as CandidateMode, // reassigned below during partition
-        vixRegime: vix.regime,
-        vixCloseAtGeneration: vix.close,
-        vixSource: vix.source,
-        suggestedEntry: levels.entryPrice,
-        suggestedTarget: levels.targetPrice,
-        suggestedStop: levels.stopPrice,
-        suggestedSizeUsd: null, // reassigned below for ranked candidates only
-        atrPeriodUsed: levels.atrPeriodUsed,
-        atrValue: levels.atrValue,
-      };
-    });
+        return {
+          ...raw,
+          candidateId: buildCandidateId(asOfIso, raw.signalType, raw.ticker, raw.score, generatedAt),
+          generatedAt,
+          asOfDate: asOfIso,
+          mode: "sub-threshold" as CandidateMode, // reassigned below during partition
+          vixRegime: vix.regime,
+          vixCloseAtGeneration: vix.close,
+          vixSource: vix.source,
+          suggestedEntry: levels.entryPrice,
+          suggestedTarget: levels.targetPrice,
+          suggestedStop: levels.stopPrice,
+          suggestedSizeUsd: null, // reassigned below for ranked candidates only
+          atrPeriodUsed: levels.atrPeriodUsed,
+          atrValue: levels.atrValue,
+        };
+      });
 
     // Shadow-mode modules' candidates bypass ranking structurally — a
     // shadow candidate never competes for a ranked/sub-threshold slot no
@@ -404,6 +423,7 @@ export class StrategyEngine {
       subThreshold,
       shadow,
       skippedTypes,
+      skippedTickers,
     };
   }
 }

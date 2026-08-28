@@ -227,6 +227,13 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
             console.log(`  ${chalk.yellow(s.signalType)}: ${s.reason}`);
           }
         }
+
+        if (result.skippedTickers.length > 0) {
+          console.log(chalk.bold("\nSkipped tickers (market-data fetch failed):"));
+          for (const s of result.skippedTickers) {
+            console.log(`  ${chalk.yellow(s.ticker)}: ${s.reason}`);
+          }
+        }
       },
     );
 

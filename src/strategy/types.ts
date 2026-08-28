@@ -163,4 +163,12 @@ export interface StrategyRunResult {
   subThreshold: StrategyCandidate[]; // next subThresholdCount below the floor
   shadow: StrategyCandidate[]; // shadow-mode candidates, never ranked or sized
   skippedTypes: Array<{ signalType: SignalType; reason: string }>;
+  /**
+   * Tickers whose `MarketDataService.fetchHistoricalData` call threw (all
+   * providers exhausted) — that ticker's raw signals are excluded from
+   * `ranked`/`subThreshold`/`shadow` entirely rather than aborting the
+   * whole run (CR-01: one bad ticker must not cost every other ticker's
+   * candidates for the day).
+   */
+  skippedTickers: Array<{ ticker: string; reason: string }>;
 }
