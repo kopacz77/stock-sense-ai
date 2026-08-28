@@ -1,6 +1,7 @@
 import express from "express";
 import { Server as SocketIOServer } from "socket.io";
 import { createServer } from "node:http";
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
@@ -11,6 +12,11 @@ import { StockDiscovery, type DiscoveryResult } from "../discovery/stock-discove
 import { MarketDataService } from "../data/market-data-service.js";
 import { SecureConfig } from "../config/secure-config.js";
 import { TechnicalIndicators } from "../analysis/technical-indicators.js";
+import { JsonlStore } from "../market-intelligence/storage/jsonl-store.js";
+import { loadStrategyConfig } from "../strategy/config.js";
+import { DecisionLog } from "../strategy/decision-log.js";
+import type { StrategyCandidate } from "../strategy/types.js";
+import type { VixQuote } from "../strategy/vix-provider.js";
 import {
   authMiddleware,
   optionalAuthMiddleware,
@@ -47,6 +53,23 @@ const MonitoringStartSchema = z.object({
   maxResults: z.union([z.string(), z.number()]).optional().transform(val =>
     val ? Number.parseInt(String(val), 10) : 20
   ),
+});
+
+// Strategy accept/skip schemas (T-11-07-02) — mirrors MonitoringStartSchema's
+// safeParse + 400/details convention. Numbers must be positive+finite so a
+// malformed or hostile body can never write NaN/Infinity/negative levels
+// into the decision log; note is capped so a skip/accept body can't be used
+// to smuggle an oversized payload past the 1mb JSON body limit.
+const StrategyAcceptSchema = z.object({
+  entry: z.number().positive().finite().optional(),
+  target: z.number().positive().finite().optional(),
+  stop: z.number().positive().finite().optional(),
+  sizeUsd: z.number().positive().finite().optional(),
+  note: z.string().max(500).optional(),
+});
+
+const StrategySkipSchema = z.object({
+  note: z.string().max(500).optional(),
 });
 
 const DiscoverRequestSchema = z.object({
@@ -92,7 +115,13 @@ export class WebServer {
   private stockDiscovery = new StockDiscovery();
   private marketData = new MarketDataService();
   private config = SecureConfig.getInstance();
-  
+
+  // Strategy dashboard route (11-07) — same data directory the strategy CLI
+  // defaults to; read-only against candidates-*.jsonl / vix-cache.json,
+  // writes only through DecisionLog (never a duplicate record-construction
+  // path — T-11-07-01 key_link).
+  private readonly strategyDataDir = "./data/strategy";
+
   private port = 3001;
 
   constructor(port = 3001) {
@@ -507,6 +536,172 @@ export class WebServer {
             volatilityAnalysis: true,
           },
         });
+      } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
+      }
+    });
+
+    // ==========================================
+    // Strategy API (11-07) — minimal /strategy dashboard route.
+    // Registered here, after the /api auth-middleware block above, so these
+    // routes inherit the exact same access level as /api/monitoring/* —
+    // authMiddleware when AUTH_REQUIRED, optionalAuthMiddleware otherwise.
+    // No separate mount path, no route-level opt-out (T-11-07-01).
+    // ==========================================
+
+    // GET /api/strategy/candidates?date=YYYY-MM-DD
+    // Reads the persisted candidates-*.jsonl for the date rather than
+    // re-running the engine — a browser request must never trigger a
+    // multi-second live engine run with real provider fetches (T-11-07-05).
+    this.app.get("/api/strategy/candidates", async (req, res): Promise<void> => {
+      try {
+        const dateParam = typeof req.query.date === "string" ? req.query.date : undefined;
+        if (dateParam !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+          res.status(400).json({ error: "Invalid date format, expected YYYY-MM-DD" });
+          return;
+        }
+        const asOfDate = dateParam ?? (new Date().toISOString().split("T")[0] ?? "");
+        const date = new Date(`${asOfDate}T00:00:00.000Z`);
+
+        const candidatesStore = new JsonlStore<StrategyCandidate>(this.strategyDataDir, "candidates");
+        const candidates = await candidatesStore.readDay(date);
+
+        if (candidates.length === 0) {
+          // No run persisted for this date at all — the honest empty state
+          // (D-14's web equivalent): "no run yet", not "ran and found
+          // nothing." Do not backfill placeholder cards.
+          res.json({
+            asOfDate,
+            generated: false,
+            vix: null,
+            ranked: [],
+            subThreshold: [],
+            shadow: [],
+            skippedTypes: [],
+          });
+          return;
+        }
+
+        const ranked = candidates.filter((c) => c.mode === "ranked");
+        const subThreshold = candidates.filter((c) => c.mode === "sub-threshold");
+        const shadow = candidates.filter((c) => c.mode === "shadow");
+
+        // Prefer the VIX quote StrategyEngine cached for this exact date;
+        // fall back to reconstructing it from any persisted candidate's own
+        // vix* fields (every candidate from one run shares the same quote)
+        // so a cache-file miss never hides the VIX header.
+        let vix: VixQuote | null = null;
+        try {
+          const cacheRaw = await fs.readFile(
+            path.join(this.strategyDataDir, "vix-cache.json"),
+            "utf8",
+          );
+          const cache = JSON.parse(cacheRaw) as Record<string, VixQuote>;
+          vix = cache[asOfDate] ?? null;
+        } catch {
+          vix = null;
+        }
+        if (!vix) {
+          const any = candidates[0];
+          if (any) {
+            vix = {
+              date: asOfDate,
+              close: any.vixCloseAtGeneration,
+              regime: any.vixRegime,
+              source: any.vixSource,
+              fetchedAt: any.generatedAt,
+            };
+          }
+        }
+
+        res.json({
+          asOfDate,
+          generated: true,
+          vix,
+          ranked,
+          subThreshold,
+          shadow,
+          // skippedTypes is a run-time-only field on StrategyRunResult — the
+          // engine never persists it to candidates-*.jsonl (only the CLI
+          // prints it). Always empty here until a future plan persists it.
+          skippedTypes: [] as Array<{ signalType: string; reason: string }>,
+        });
+      } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
+      }
+    });
+
+    // POST /api/strategy/candidates/:id/accept
+    this.app.post("/api/strategy/candidates/:id/accept", async (req, res): Promise<void> => {
+      try {
+        const parseResult = StrategyAcceptSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          res.status(400).json({
+            error: "Invalid request parameters",
+            details: parseResult.error.issues,
+          });
+          return;
+        }
+        const { entry, target, stop, sizeUsd, note } = parseResult.data;
+
+        const decisionLog = new DecisionLog({ strategyDataDir: this.strategyDataDir });
+        const candidate = await decisionLog.findCandidate(req.params.id);
+        if (!candidate) {
+          res.status(404).json({ error: `Unknown candidateId "${req.params.id}"` });
+          return;
+        }
+
+        if (sizeUsd !== undefined) {
+          // The web form has no confirmation step, so unlike the CLI (which
+          // warns and proceeds) this boundary is enforced hard (T-11-07-02).
+          const config = await loadStrategyConfig();
+          const maxRegimeSizeUsd =
+            Math.max(...Object.values(config.regimeSizePct)) * config.assumedEquity;
+          const cap = maxRegimeSizeUsd * 2;
+          if (sizeUsd > cap) {
+            res.status(400).json({
+              error: `sizeUsd ${sizeUsd} exceeds the 2x safety cap of ${cap} (largest regime size ${maxRegimeSizeUsd} for assumedEquity ${config.assumedEquity})`,
+            });
+            return;
+          }
+        }
+
+        // Same DecisionLog.recordAccept the CLI calls — no duplicate
+        // record-construction logic in the web layer (key_link).
+        const record = await decisionLog.recordAccept(
+          candidate,
+          { entry, target, stop, size: sizeUsd },
+          note,
+        );
+        res.json({ success: true, record });
+      } catch (error) {
+        res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
+      }
+    });
+
+    // POST /api/strategy/candidates/:id/skip
+    this.app.post("/api/strategy/candidates/:id/skip", async (req, res): Promise<void> => {
+      try {
+        const parseResult = StrategySkipSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          res.status(400).json({
+            error: "Invalid request parameters",
+            details: parseResult.error.issues,
+          });
+          return;
+        }
+        const { note } = parseResult.data;
+
+        const decisionLog = new DecisionLog({ strategyDataDir: this.strategyDataDir });
+        const candidate = await decisionLog.findCandidate(req.params.id);
+        if (!candidate) {
+          res.status(404).json({ error: `Unknown candidateId "${req.params.id}"` });
+          return;
+        }
+
+        // Same DecisionLog.recordSkip the CLI calls.
+        const record = await decisionLog.recordSkip(candidate, note);
+        res.json({ success: true, record });
       } catch (error) {
         res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
       }
