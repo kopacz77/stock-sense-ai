@@ -122,6 +122,11 @@ Turn the M2-04 per-ticker-day rollup + active calendar catalysts + PM-derived si
 - **Gated:** SENTIMENT_VELOCITY ranks and sizes only once `intel backlog-drain` has extended `scored-articles` through the present (engine checks scored-day coverage for the trailing 3-day window; emits nothing for that type when coverage is missing — never a silent zero-delta).
 - **Shadow-only:** FADE_OVERSHOOT computes candidates and writes them to the decision log with `mode: "shadow"`, but never enters the top-5 ranking and never receives a size. Purpose: accumulate evidence for v2 without v1 taking counter-trend risk.
 - **FRED macro calendar:** `FRED_API_KEY` was installed 2026-08-27 (previously never configured, which is why scheduled CPI/NFP/PCE/FOMC events were ~5% of the catalyst corpus). CATALYST_ANCHORED fixtures and the live-window backtest must include scheduled macro prints, not only LLM-emergent product/lawsuit/M&A catalysts.
+
+### Backtest acceptance (operator decision, 2026-08-27 — supersedes the per-regime bar for v1)
+- The CONTEXT-locked "Sharpe > 0.5 + MaxDD < 25% per M2-01 regime (2018–2025)" bar is **structurally unevaluable** for M2-05: `REGIMES` in `src/backtesting/analytics/regime-segmenter.ts` covers 2018–2025 only and every M2-04 data stream starts 2026-05-23. Confirmed by the operator on 2026-08-27.
+- **v1 acceptance = live-window gate:** run the engine day-by-day over the real substrate window (2026-05-23 → run date; per-type sub-ranges per RESEARCH §8) and report per-signal-type and combined Sharpe / MaxDD / trade count via `PerformanceMetricsCalculator.calculate()` directly (no regime slicing). Output must be labelled "single continuous 2026 window — interim, not the per-regime bar". Thresholds for v1: combined Sharpe > 0 and MaxDD < 25% over the window, and each *core* type (CATALYST_ANCHORED, SECTOR_ROTATION_FROM_PM) reported individually.
+- **Deferred (new):** a true per-regime backtest, unlocked by either a 2023–2025 Polymarket re-mapping project (separate phase) or enough live 2026 history to be regime-classified.
 </decisions>
 
 <specifics>

@@ -252,9 +252,11 @@ M2-07: Live Execution + Tax Tracking
 ### Phase M2-05: AI-Augmented Strategy Engine
 
 **Directory**: `.planning/phases/11-ai-strategy/`
-**Status**: ⏸ **DEFERRED to ~2026-07-02** (operator decision 2026-06-02). CONTEXT.md is captured — re-enter `/gsd:plan-phase 11` after 30 days of live M2-04 data exist. Re-entry checklist at top of CONTEXT.md.
+**Status**: 📋 **PLANNED** (2026-08-27). Deferral window closed — `11-RESEARCH.md`, `11-PATTERNS.md`, `11-VALIDATION.md` and 8 plans committed. Run `/gsd-execute-phase 11`.
 
-**Why deferred**: M2-04 substrate code is complete (commits 89430fc / a68498c) but the live scheduler was started 2026-05-30 and hasn't picked up M2-04 yet — and even after restart, M2-04 outputs only go forward from today. The CONTEXT-locked backtest validation (Sharpe > 0.5 + MaxDD < 25% per regime) needs real historical scored-articles / rollups to test against. Operator chose the rigorous path: collect 30 days of live data, then build M2-05 with real evidence rather than test-fixture data.
+**Deferral history**: deferred 2026-06-02 → 2026-08-27 to accumulate live M2-04 data. On re-entry the substrate was: `polymarket-snapshots` + `news` continuous from 2026-05-23, `catalyst-flags` + `ticker-day-summary` continuous from 2026-05-31, `scored-articles` 36 non-contiguous days 2026-06-02 → 07-26 (LM Studio outage 07-27 → 08-27, backlog drained separately).
+
+**Backtest-scope change (operator decision 2026-08-27)**: Success Criterion 2 below ("same 2018-2025 universe + regimes as M2-01") is **structurally unevaluable** — `REGIMES` in `src/backtesting/analytics/regime-segmenter.ts` covers 2018-2025 only and every M2-04 stream starts 2026-05-23, so the intersection is empty for every signal type. v1 ships a live-window gate over the real 2026 window instead (combined Sharpe > 0, MaxDD < 25%, core types reported individually), explicitly labelled interim. The true per-regime backtest is deferred — see `docs/M2-05_BACKTEST_GAP.md` (written in plan 11-06) for the structural analysis and the two paths that would unlock it.
 
 **Goal**: Combine technical signals (from M2-01 winners) + LLM analysis (from M2-04) + volatility regime (from M2-03) into a single decision engine that produces *prioritized* candidate signals rather than raw buy/sell.
 
@@ -276,6 +278,18 @@ M2-07: Live Execution + Tax Tracking
 3. Top-N daily candidates surfaced via CLI and web dashboard with full rationale
 4. Operator can accept / skip each candidate; system tracks decision history
 5. Rationale displayed: technical setup + recent news summary + theme + vol regime + suggested size
+
+**Plans:** 8 plans in 5 waves
+
+Plans:
+- [ ] 11-01-PLAN.md — Article-intake materiality pre-screen: pure pre-LLM ranking replacing `isPriorityArticle`, ≥ 85% high-materiality retention at top-50% on a held-out week (Wave 1)
+- [ ] 11-02-PLAN.md — TRACER: SECTOR_ROTATION_FROM_PM end-to-end (types, config, VIX provider, public ATR series, engine, decision log, `strategy` CLI) + generalized levels/sizing (Wave 1)
+- [ ] 11-03-PLAN.md — Shared catalyst-loader extraction + CATALYST_ANCHORED module across both scheduled-macro and LLM-emergent catalyst populations (Wave 2)
+- [ ] 11-04-PLAN.md — Scored-day coverage gate + SENTIMENT_VELOCITY (gated) + FADE_OVERSHOOT (shadow-only) (Wave 2)
+- [ ] 11-05-PLAN.md — Engine integration: four-module registry, core/gated/shadow modes, cross-type ranking (top-5, 0.4 floor, next-3), full nine-subcommand CLI (Wave 3)
+- [ ] 11-06-PLAN.md — Live-window backtest gate over the real 2026 substrate + `docs/M2-05_BACKTEST_GAP.md` (Wave 4)
+- [ ] 11-07-PLAN.md — Minimal `/strategy` web route + three validated `/api/strategy/*` endpoints (Wave 4)
+- [ ] 11-08-PLAN.md — Iran-ceasefire worked example, phase acceptance run, validation sign-off (Wave 5)
 
 **Estimated effort**: 5-7 days
 
