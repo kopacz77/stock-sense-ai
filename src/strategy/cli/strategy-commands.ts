@@ -250,8 +250,16 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
         const candidatesStore = new JsonlStore<StrategyCandidate>(strategyDataDir, "candidates");
         const candidates = await candidatesStore.readDay(date);
 
+        // Decisions are filed under the day they were MADE (decidedAt), not the
+        // candidate's asOfDate — an operator can accept a 08-26 candidate on
+        // 08-28. Read from the candidate day through today so those show up
+        // (found at the 11-07 checkpoint: web accept looked "pending" here).
         const log = new DecisionLog({ strategyDataDir });
-        const decisions = await log.readDedupedByCandidateId(dateIso, dateIso);
+        const todayIso = new Date().toISOString().split("T")[0] ?? dateIso;
+        const decisions = await log.readDedupedByCandidateId(
+          dateIso,
+          todayIso > dateIso ? todayIso : dateIso,
+        );
         const decisionById = new Map(decisions.map((d) => [d.candidateId, d]));
 
         const decisionFiltered = candidates.filter((c) => {

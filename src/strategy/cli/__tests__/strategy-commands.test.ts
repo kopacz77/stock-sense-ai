@@ -254,6 +254,29 @@ describe("strategy CLI — full subcommand surface", () => {
     expect(logLines.join("\n")).toContain("XLE");
   });
 
+  it("list-candidates reflects decisions made on a LATER day than the candidate date (11-07 checkpoint bug)", async () => {
+    await writeRollupFixture(intelDataDir, DATE, [strongPmRollup("XLE"), strongPmRollup("IWM")]);
+    const program = buildProgram(defaultDeps());
+    expect(await runCli(program, ["run", "--date", DATE])).toBeNull();
+    const ranked = (await readPersistedCandidates()).filter((c) => c.mode === "ranked");
+    const xle = ranked.find((c) => c.ticker === "XLE")!;
+    const iwm = ranked.find((c) => c.ticker === "IWM")!;
+
+    // Decisions are recorded with decidedAt = now, i.e. filed under today's
+    // decisions-*.jsonl, while the candidates live under DATE's file.
+    expect(await runCli(program, ["accept", xle.candidateId])).toBeNull();
+    expect(await runCli(program, ["skip", iwm.candidateId])).toBeNull();
+
+    logLines.length = 0;
+    expect(await runCli(program, ["list-candidates", "--date", DATE, "--include-skipped"])).toBeNull();
+    const out = logLines.join("\n");
+    const xleLine = out.split("\n").find((l) => l.includes(" XLE "));
+    const iwmLine = out.split("\n").find((l) => l.includes(" IWM "));
+    expect(xleLine, out).toMatch(/accepted/);
+    expect(iwmLine, out).toMatch(/skipped/);
+    expect(out).not.toMatch(/\[pending\][^\n]* XLE /);
+  });
+
   it("all nine subcommands are registered, including backtest (M2-05 Plan 11-06)", () => {
     const program = buildProgram(defaultDeps());
     const strategyCmd = program.commands.find((c) => c.name() === "strategy");
