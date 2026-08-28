@@ -1,17 +1,30 @@
 /**
  * StrategyEngine — orchestrates the "PM signal to sized trade idea" path
- * (M2-05 Plan 11-02 Task 1, the phase tracer).
+ * (M2-05 Plan 11-02 Task 1, the phase tracer; four-type registry + mode
+ * enforcement added in Plan 11-05 Task 1).
  *
  * `generateCandidates(asOfDate)`:
  *   1. loads `config/strategy-config.json`
- *   2. reads today's `TickerDaySummary` rollups from `data/intel/` (M2-04's
+ *   2. asserts every module's declared `mode` matches `config.signalModes`
+ *      (D-01/D-02 — the config file and the module classes are two
+ *      statements of the same decision and must not drift)
+ *   3. reads today's `TickerDaySummary` rollups from `data/intel/` (M2-04's
  *      substrate — the engine's ONLY substrate input)
- *   3. runs each configured `SignalTypeModule` (gate → generate)
- *   4. fetches the VIX quote once
- *   5. fetches ATR inputs per surviving ticker via `MarketDataService`
- *   6. computes entry/target/stop (levels.ts) and size (sizing.ts)
- *   7. partitions into ranked / sub-threshold / shadow (D-05, D-14)
- *   8. persists every candidate to `data/strategy/candidates-YYYY-MM-DD.jsonl`
+ *   4. runs each configured `SignalTypeModule` (gate → generate), a failed
+ *      gate or a thrown `generate()` both become a `skippedTypes` entry
+ *      rather than aborting the run
+ *   5. fetches the VIX quote once
+ *   6. fetches ATR inputs per surviving ticker via `MarketDataService`
+ *   7. computes entry/target/stop (levels.ts) for every candidate,
+ *      including shadow ones
+ *   8. partitions `mode: "shadow"` modules' candidates out of ranking
+ *      entirely (D-01) — they always land in `StrategyRunResult.shadow`
+ *      with `suggestedSizeUsd: null`, never in `ranked`/`subThreshold`
+ *   9. resolves cross-type same-(ticker,direction) collisions and ranks
+ *      the survivors (D-04/D-05/D-14 — see `resolveTickerCollisions`/
+ *      `rankCandidates`)
+ *  10. persists every surviving candidate to
+ *      `data/strategy/candidates-YYYY-MM-DD.jsonl`
  *
  * Deliberately NOT wired into `market-intelligence/scheduler/cycle-runner.ts`
  * (D-21) — `strategy run` is its own invocation, not part of the 60-90s
@@ -25,15 +38,17 @@ import { TechnicalIndicators } from "../analysis/technical-indicators.js";
 import { MarketDataService } from "../data/market-data-service.js";
 import type { OHLCVData } from "../data/types.js";
 import { JsonlStore } from "../market-intelligence/storage/jsonl-store.js";
+import type { StrategyConfig } from "./config.js";
 import { loadStrategyConfig } from "./config.js";
 import { computeLevels } from "./levels.js";
-import { SectorRotationModule } from "./signals/sector-rotation.js";
+import { defaultSignalModules } from "./signals/index.js";
 import { suggestSizeUsd } from "./sizing.js";
 import { loadRollupsForDay } from "./substrate.js";
 import type {
   CandidateMode,
   RawSignal,
   SignalContext,
+  SignalMode,
   SignalType,
   SignalTypeModule,
   StrategyCandidate,
@@ -56,6 +71,15 @@ export interface StrategyEngineOptions {
   intelDataDir?: string;
   strategyDataDir?: string;
   configPath?: string;
+  /**
+   * Inject a pre-loaded config directly (bypasses `loadStrategyConfig`'s
+   * async file read). Mainly for tests that want the mode-consistency
+   * assertion (below) to throw synchronously at construction, and for any
+   * caller that has already loaded config and wants to avoid a second
+   * read. Production usage normally omits this and lets `configPath`
+   * resolve from disk on each `generateCandidates` call.
+   */
+  config?: StrategyConfig;
   modules?: SignalTypeModule[];
   vixProvider?: VixSource;
   marketData?: MarketDataSource;
@@ -86,10 +110,55 @@ export function buildCandidateId(
   return `${asOfDate}-${signalType}-${ticker}-${hash}`;
 }
 
+/**
+ * Thrown when a `SignalTypeModule`'s declared `mode` disagrees with
+ * `config.signalModes[module.signalType]` (T-11-05-02). The config file and
+ * the module classes are two statements of the same v1-mode decision (D-02);
+ * this keeps a hand-edit of one from silently promoting/demoting a signal
+ * type the other side still thinks is unchanged.
+ */
+export class SignalModeMismatchError extends Error {
+  constructor(
+    mismatches: Array<{ signalType: SignalType; declared: SignalMode; configured: SignalMode }>,
+  ) {
+    super(
+      `strategy-engine: module/config signalModes mismatch — ${mismatches
+        .map(
+          (m) =>
+            `${m.signalType} (module declares "${m.declared}", config.signalModes says "${m.configured}")`,
+        )
+        .join("; ")}`,
+    );
+    this.name = "SignalModeMismatchError";
+  }
+}
+
+/**
+ * Assert every module's declared `mode` matches `signalModes[module.signalType]`
+ * — throws `SignalModeMismatchError` naming every offending type at once
+ * rather than failing on the first mismatch found.
+ */
+export function assertModulesMatchConfig(
+  modules: SignalTypeModule[],
+  signalModes: Record<SignalType, SignalMode>,
+): void {
+  const mismatches = modules
+    .filter((m) => signalModes[m.signalType] !== undefined && signalModes[m.signalType] !== m.mode)
+    .map((m) => ({
+      signalType: m.signalType,
+      declared: m.mode,
+      configured: signalModes[m.signalType],
+    }));
+  if (mismatches.length > 0) {
+    throw new SignalModeMismatchError(mismatches);
+  }
+}
+
 export class StrategyEngine {
   private readonly intelDataDir: string;
   private readonly strategyDataDir: string;
   private readonly configPath: string | undefined;
+  private readonly suppliedConfig: StrategyConfig | undefined;
   private readonly modules: SignalTypeModule[];
   private readonly vixProvider: VixSource;
   private readonly marketData: MarketDataSource;
@@ -99,7 +168,11 @@ export class StrategyEngine {
     this.intelDataDir = options.intelDataDir ?? "./data/intel";
     this.strategyDataDir = options.strategyDataDir ?? "./data/strategy";
     this.configPath = options.configPath;
-    this.modules = options.modules ?? [new SectorRotationModule()];
+    this.suppliedConfig = options.config;
+    this.modules = options.modules ?? defaultSignalModules();
+    if (this.suppliedConfig) {
+      assertModulesMatchConfig(this.modules, this.suppliedConfig.signalModes);
+    }
     this.vixProvider =
       options.vixProvider ?? new VixProvider({ strategyDataDir: this.strategyDataDir });
     this.marketData = options.marketData ?? new MarketDataService();
@@ -107,7 +180,9 @@ export class StrategyEngine {
   }
 
   async generateCandidates(asOfDate: Date): Promise<StrategyRunResult> {
-    const config = await loadStrategyConfig(this.configPath);
+    const config = this.suppliedConfig ?? (await loadStrategyConfig(this.configPath));
+    assertModulesMatchConfig(this.modules, config.signalModes);
+
     const asOfIso = asOfDate.toISOString().split("T")[0] ?? "";
 
     const rollups = await loadRollupsForDay(this.intelDataDir, asOfDate);
@@ -120,6 +195,9 @@ export class StrategyEngine {
 
     const skippedTypes: StrategyRunResult["skippedTypes"] = [];
     const rawSignals: RawSignal[] = [];
+    const modeByType = new Map<SignalType, SignalMode>(
+      this.modules.map((m) => [m.signalType, m.mode]),
+    );
 
     for (const mod of this.modules) {
       if (mod.gate) {
@@ -129,8 +207,15 @@ export class StrategyEngine {
           continue;
         }
       }
-      const generated = await mod.generate(ctx);
-      rawSignals.push(...generated);
+      try {
+        const generated = await mod.generate(ctx);
+        rawSignals.push(...generated);
+      } catch (err) {
+        // One broken signal type must not cost the operator the whole
+        // morning's candidates from the other three (T-11-05-04).
+        const message = err instanceof Error ? err.message : String(err);
+        skippedTypes.push({ signalType: mod.signalType, reason: `generate() threw: ${message}` });
+      }
     }
 
     const vix = await this.vixProvider.getForDate(asOfDate);
@@ -196,7 +281,20 @@ export class StrategyEngine {
       };
     });
 
-    const sorted = [...allCandidates].sort((a, b) => b.score - a.score);
+    // Shadow-mode modules' candidates bypass ranking structurally — a
+    // shadow candidate never competes for a ranked/sub-threshold slot no
+    // matter how high its score (D-01, T-11-05-01).
+    const shadow: StrategyCandidate[] = [];
+    const rankable: StrategyCandidate[] = [];
+    for (const candidate of allCandidates) {
+      if (modeByType.get(candidate.signalType) === "shadow") {
+        shadow.push({ ...candidate, mode: "shadow" as CandidateMode, suggestedSizeUsd: null });
+      } else {
+        rankable.push(candidate);
+      }
+    }
+
+    const sorted = [...rankable].sort((a, b) => b.score - a.score);
     const above = sorted.filter((c) => c.score >= config.scoreFloor);
     const below = sorted.filter((c) => c.score < config.scoreFloor);
 
@@ -214,7 +312,6 @@ export class StrategyEngine {
     const subThreshold: StrategyCandidate[] = below
       .slice(0, config.subThresholdCount)
       .map((c) => ({ ...c, mode: "sub-threshold" as CandidateMode, suggestedSizeUsd: null }));
-    const shadow: StrategyCandidate[] = [];
 
     const toPersist = [...ranked, ...subThreshold, ...shadow];
     if (toPersist.length > 0) {
