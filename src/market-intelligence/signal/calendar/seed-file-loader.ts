@@ -1,7 +1,7 @@
 /**
  * Seed-file Calendar Loader — M2-04 Plan 10-03
  *
- * Reads operator-maintained JSON seed files (FDA PDUFA + OPEC schedule)
+ * Reads operator-maintained JSON seed files (FDA PDUFA + OPEC + FOMC schedule)
  * and emits CalendarEvents. The seed files are operator-curated because
  * neither category has a clean free-tier API:
  *   - FDA PDUFA: behind paywalls (biopharmcatalyst); operator copies
@@ -48,6 +48,17 @@ interface OpecSeedFile {
   entries: OpecEntry[];
 }
 
+interface FomcEntry {
+  date: string; // YYYY-MM-DD — statement day (second day of a two-day meeting)
+  source_url?: string;
+}
+
+interface FomcSeedFile {
+  version?: number;
+  lastUpdated?: string;
+  entries: FomcEntry[];
+}
+
 export class SeedFileCalendarLoader {
   private readonly configDir: string;
 
@@ -56,8 +67,12 @@ export class SeedFileCalendarLoader {
   }
 
   async loadAll(): Promise<CalendarEvent[]> {
-    const [pdufa, opec] = await Promise.all([this.loadPdufa(), this.loadOpec()]);
-    return [...pdufa, ...opec];
+    const [pdufa, opec, fomc] = await Promise.all([
+      this.loadPdufa(),
+      this.loadOpec(),
+      this.loadFomc(),
+    ]);
+    return [...pdufa, ...opec, ...fomc];
   }
 
   private async loadPdufa(): Promise<CalendarEvent[]> {
@@ -104,6 +119,33 @@ export class SeedFileCalendarLoader {
       },
       firstSeenAt: now,
     }));
+  }
+
+  /**
+   * FOMC statement days. Seeded because FRED publishes no future schedule for
+   * release 101 (its API pads every calendar day instead) — the Fed's annual
+   * calendar at federalreserve.gov is the source of truth.
+   */
+  private async loadFomc(): Promise<CalendarEvent[]> {
+    const raw = await this.readJson<FomcSeedFile>("fomc-schedule-seed.json");
+    if (!raw || !Array.isArray(raw.entries)) return [];
+    const now = new Date().toISOString();
+    return raw.entries
+      .filter((e) => typeof e.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.date))
+      .map((e) => ({
+        id: `fomc-${e.date}`,
+        type: "fomc" as const,
+        tickers: [],
+        affectedSectors: ["TLT", "IEF", "XLF", "IWM"],
+        expectedDate: e.date,
+        expectedTimeEt: "14:00",
+        magnitudePrior: 5 as const,
+        direction: "uncertain" as const,
+        confidence: 0.6,
+        source: "calendar:fomc-seed" as const,
+        sourceMeta: { source_url: e.source_url },
+        firstSeenAt: now,
+      }));
   }
 
   private async readJson<T>(filename: string): Promise<T | null> {

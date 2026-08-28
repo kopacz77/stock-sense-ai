@@ -39,15 +39,28 @@ export interface FredReleaseDescriptor {
  * (BLS prints at 08:30 ET, FOMC statement at 14:00 ET, ISM/JOLTS at 10:00 ET).
  */
 export const FRED_RELEASE_IDS: FredReleaseDescriptor[] = [
+  // Release ids verified against GET /fred/release?release_id=N on 2026-08-27.
+  // Earlier table had 21 (H.6 Money Stock) as PCE, 84 (nonexistent) as Retail
+  // Sales, 375 (Overnight Bank Funding Rate, daily) as ISM, and 101 (FOMC
+  // Press Release — FRED publishes no future schedule for it, so the API pads
+  // every calendar day). ISM is not on FRED at all; FOMC comes from
+  // config/fomc-schedule-seed.json via SeedFileCalendarLoader instead.
   { id: 10, type: "cpi", label: "CPI", magnitudePrior: 4, timeEt: "08:30" },
   { id: 50, type: "nfp", label: "Employment Situation (NFP)", magnitudePrior: 5, timeEt: "08:30" },
-  { id: 21, type: "pce", label: "Personal Income & Outlays (PCE)", magnitudePrior: 4, timeEt: "08:30" },
-  { id: 101, type: "fomc", label: "FOMC Press Release", magnitudePrior: 5, timeEt: "14:00" },
-  { id: 84, type: "retail_sales", label: "Retail Sales", magnitudePrior: 3, timeEt: "08:30" },
+  { id: 54, type: "pce", label: "Personal Income & Outlays (PCE)", magnitudePrior: 4, timeEt: "08:30" },
+  { id: 9, type: "retail_sales", label: "Advance Retail Sales", magnitudePrior: 3, timeEt: "08:30" },
   { id: 192, type: "jolts", label: "JOLTS", magnitudePrior: 2, timeEt: "10:00" },
-  { id: 375, type: "ism", label: "ISM Manufacturing PMI", magnitudePrior: 3, timeEt: "10:00" },
   { id: 53, type: "gdp", label: "GDP", magnitudePrior: 3, timeEt: "08:30" },
 ];
+
+/**
+ * FRED's `include_release_dates_with_no_data=true` is the only way to get a
+ * release's *future* schedule — but for a release with no published schedule
+ * FRED answers with every calendar day in the realtime window. No macro print
+ * fires more than ~3 times in 60 days (GDP: advance/second/third), so anything
+ * past this many dates is padding, not a schedule, and is discarded.
+ */
+export const MAX_RELEASE_DATES_PER_WINDOW = 10;
 
 interface FredReleaseDatesResponse {
   release_dates?: Array<{
@@ -127,9 +140,17 @@ export class FredCalendarFetcher {
       throw new Error(`FRED error ${body.error_code}: ${body.error_message ?? "unknown"}`);
     }
 
-    const rows = body.release_dates ?? [];
+    const rows = (body.release_dates ?? []).filter((row) =>
+      isWithinWindow(row.date, realtime_start, realtime_end),
+    );
+    if (rows.length > MAX_RELEASE_DATES_PER_WINDOW) {
+      console.warn(
+        `[FredCalendarFetcher] release ${rd.id} (${rd.label}) returned ${rows.length} dates in ` +
+          `${realtime_start}..${realtime_end} — FRED has no schedule for it and padded every day; ignoring.`,
+      );
+      return [];
+    }
     return rows
-      .filter((row) => isWithinWindow(row.date, realtime_start, realtime_end))
       .map((row) => ({
         id: `${rd.type}-${row.date}`,
         type: rd.type,

@@ -112,4 +112,21 @@ describe("SeedFileCalendarLoader", () => {
     expect(opec?.magnitudePrior).toBe(4);
     expect(opec?.sourceMeta?.meeting_type).toBe("OPEC");
   });
+
+  it("loads FOMC statement days from fomc-schedule-seed.json as magnitude-5 fomc events", async () => {
+    await writeJson("fomc-schedule-seed.json", {
+      version: 1,
+      entries: [{ date: "2026-09-16", source_url: "https://www.federalreserve.gov/x" }, { date: "bad" }],
+    });
+    const events = await new SeedFileCalendarLoader({ configDir: tmpDir }).loadAll();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      id: "fomc-2026-09-16",
+      type: "fomc",
+      expectedDate: "2026-09-16",
+      expectedTimeEt: "14:00",
+      magnitudePrior: 5,
+      source: "calendar:fomc-seed",
+    });
+  });
 });
