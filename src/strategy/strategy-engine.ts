@@ -154,6 +154,84 @@ export function assertModulesMatchConfig(
   }
 }
 
+/**
+ * Cross-type same-(ticker,direction) collision resolution (D-04/RESEARCH
+ * Pitfall 1) — two candidates from DIFFERENT signal types on the same
+ * ticker pointing the same direction collapse to one: the higher score
+ * survives, keeping its own `candidateId`, and the dropped candidate's
+ * type + score is appended to the survivor's rationale so the evidence is
+ * never silently lost. Opposite-direction candidates for the same ticker
+ * never interact — the disagreement between two signal types is
+ * information, not a bug, and both survive.
+ *
+ * The within-type collision case (two CATALYST_ANCHORED catalysts both
+ * bullish NVDA) is each module's own job (see
+ * `catalyst-anchored.ts`'s `dedupeSameTypeCollisions`) — by the time
+ * candidates reach here every module has already deduped its own output,
+ * so this function only ever sees at most one candidate per
+ * (signalType, ticker, direction) triple.
+ */
+export function resolveTickerCollisions(candidates: StrategyCandidate[]): StrategyCandidate[] {
+  const byKey = new Map<string, StrategyCandidate>();
+
+  for (const candidate of candidates) {
+    const key = `${candidate.ticker}|${candidate.direction}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, candidate);
+      continue;
+    }
+
+    const existingWins =
+      existing.score > candidate.score ||
+      (existing.score === candidate.score && existing.timeHorizonDays <= candidate.timeHorizonDays);
+    const winner = existingWins ? existing : candidate;
+    const loser = existingWins ? candidate : existing;
+
+    byKey.set(key, {
+      ...winner,
+      rationale:
+        `${winner.rationale} (${loser.signalType} also flagged ${loser.ticker} ${loser.direction} ` +
+        `at score ${loser.score.toFixed(2)}, dropped as a lower-scoring cross-type duplicate)`,
+    });
+  }
+
+  return Array.from(byKey.values());
+}
+
+/**
+ * Cross-type ranking (D-04/D-05/D-14) — sorts `candidates` by raw score
+ * descending (no per-type weight, coefficient, or bias term anywhere in
+ * this comparator; D-04 defers all of that to v2), breaking ties by
+ * nearer `timeHorizonDays` then alphabetically by `ticker` so a run is
+ * reproducible.
+ *
+ * Takes up to `config.maxCandidatesPerDay` from the ABOVE-floor prefix as
+ * `ranked` — never padded from below the floor (D-14: a quiet day with
+ * nothing above the floor produces an explicit empty `ranked`, not a
+ * backfilled top-3). Takes the next `config.subThresholdCount` candidates
+ * from whatever remains — regardless of whether that remainder is itself
+ * above or below the floor — as `subThreshold`. Anything past that is
+ * reported nowhere.
+ */
+export function rankCandidates(
+  candidates: StrategyCandidate[],
+  config: StrategyConfig,
+): { ranked: StrategyCandidate[]; subThreshold: StrategyCandidate[] } {
+  const sorted = [...candidates].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.timeHorizonDays !== b.timeHorizonDays) return a.timeHorizonDays - b.timeHorizonDays;
+    return a.ticker.localeCompare(b.ticker);
+  });
+
+  const aboveFloorCount = sorted.filter((c) => c.score >= config.scoreFloor).length;
+  const ranked = sorted.slice(0, Math.min(config.maxCandidatesPerDay, aboveFloorCount));
+  const remainder = sorted.slice(ranked.length);
+  const subThreshold = remainder.slice(0, config.subThresholdCount);
+
+  return { ranked, subThreshold };
+}
+
 export class StrategyEngine {
   private readonly intelDataDir: string;
   private readonly strategyDataDir: string;
@@ -294,11 +372,10 @@ export class StrategyEngine {
       }
     }
 
-    const sorted = [...rankable].sort((a, b) => b.score - a.score);
-    const above = sorted.filter((c) => c.score >= config.scoreFloor);
-    const below = sorted.filter((c) => c.score < config.scoreFloor);
+    const deduped = resolveTickerCollisions(rankable);
+    const { ranked: rankedRaw, subThreshold: subThresholdRaw } = rankCandidates(deduped, config);
 
-    const ranked: StrategyCandidate[] = above.slice(0, config.maxCandidatesPerDay).map((c) => ({
+    const ranked: StrategyCandidate[] = rankedRaw.map((c) => ({
       ...c,
       mode: "ranked" as CandidateMode,
       suggestedSizeUsd: suggestSizeUsd(
@@ -309,9 +386,11 @@ export class StrategyEngine {
         c.sizeModifier ?? 1,
       ),
     }));
-    const subThreshold: StrategyCandidate[] = below
-      .slice(0, config.subThresholdCount)
-      .map((c) => ({ ...c, mode: "sub-threshold" as CandidateMode, suggestedSizeUsd: null }));
+    const subThreshold: StrategyCandidate[] = subThresholdRaw.map((c) => ({
+      ...c,
+      mode: "sub-threshold" as CandidateMode,
+      suggestedSizeUsd: null,
+    }));
 
     const toPersist = [...ranked, ...subThreshold, ...shadow];
     if (toPersist.length > 0) {

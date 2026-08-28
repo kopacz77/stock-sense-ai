@@ -23,6 +23,8 @@ import {
   SignalModeMismatchError,
   StrategyEngine,
   assertModulesMatchConfig,
+  rankCandidates,
+  resolveTickerCollisions,
 } from "../strategy-engine.js";
 import type { MarketDataSource, VixSource } from "../strategy-engine.js";
 import type {
@@ -497,5 +499,227 @@ describe("StrategyEngine — module failure isolation", () => {
 
     expect(result.ranked).toHaveLength(3);
     expect(result.ranked.map((c) => c.ticker).sort()).toEqual(["AAA", "BBB", "CCC"]);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Task 2: cross-type ranking — collisions, floor, top-5, next-3, honest empty
+// ───────────────────────────────────────────────────────────────────────────
+
+function makeCandidate(
+  overrides: Partial<StrategyCandidate> &
+    Pick<StrategyCandidate, "signalType" | "ticker" | "score" | "direction">,
+): StrategyCandidate {
+  return {
+    rationale: `${overrides.signalType} on ${overrides.ticker}`,
+    entryStyle: "close",
+    targetSpec: { kind: "atr", period: 5, multiple: 2 },
+    timeHorizonDays: 5,
+    sourceArticleIds: [],
+    sourcePmMarkets: [],
+    candidateId: `2026-06-25-${overrides.signalType}-${overrides.ticker}-${Math.random().toString(16).slice(2, 10)}`,
+    generatedAt: "2026-06-25T12:00:00.000Z",
+    asOfDate: "2026-06-25",
+    mode: "sub-threshold",
+    vixRegime: "elevated",
+    vixCloseAtGeneration: 18,
+    vixSource: "live",
+    suggestedEntry: 100,
+    suggestedTarget: 110,
+    suggestedStop: 95,
+    suggestedSizeUsd: null,
+    atrPeriodUsed: 5,
+    atrValue: 2,
+    ...overrides,
+  };
+}
+
+describe("ranking", () => {
+  describe("resolveTickerCollisions", () => {
+    it("same-ticker/same-direction collapses to one candidate whose rationale names the dropped type and score", () => {
+      const winner = makeCandidate({
+        signalType: "CATALYST_ANCHORED",
+        ticker: "NVDA",
+        score: 0.8,
+        direction: "long",
+      });
+      const loser = makeCandidate({
+        signalType: "SECTOR_ROTATION_FROM_PM",
+        ticker: "NVDA",
+        score: 0.5,
+        direction: "long",
+      });
+
+      const result = resolveTickerCollisions([loser, winner]);
+      expect(result).toHaveLength(1);
+      expect(result[0]?.candidateId).toBe(winner.candidateId);
+      expect(result[0]?.score).toBe(0.8);
+      expect(result[0]?.rationale).toContain("SECTOR_ROTATION_FROM_PM");
+      expect(result[0]?.rationale).toContain("0.50");
+    });
+
+    it("same-ticker/opposite-direction yields two surviving candidates", () => {
+      const long = makeCandidate({
+        signalType: "CATALYST_ANCHORED",
+        ticker: "NVDA",
+        score: 0.8,
+        direction: "long",
+      });
+      const short = makeCandidate({
+        signalType: "FADE_OVERSHOOT",
+        ticker: "NVDA",
+        score: 0.5,
+        direction: "short",
+      });
+
+      const result = resolveTickerCollisions([long, short]);
+      expect(result).toHaveLength(2);
+      expect(result.map((c) => c.direction).sort()).toEqual(["long", "short"]);
+    });
+
+    it("keeps the surviving candidate's own candidateId; the dropped candidate is not in the output", () => {
+      const winner = makeCandidate({
+        signalType: "CATALYST_ANCHORED",
+        ticker: "NVDA",
+        score: 0.9,
+        direction: "long",
+        candidateId: "2026-06-25-CATALYST_ANCHORED-NVDA-aaaaaaaa",
+      });
+      const loser = makeCandidate({
+        signalType: "SECTOR_ROTATION_FROM_PM",
+        ticker: "NVDA",
+        score: 0.2,
+        direction: "long",
+        candidateId: "2026-06-25-SECTOR_ROTATION_FROM_PM-NVDA-bbbbbbbb",
+      });
+
+      const result = resolveTickerCollisions([winner, loser]);
+      const ids = result.map((c) => c.candidateId);
+      expect(ids).toEqual(["2026-06-25-CATALYST_ANCHORED-NVDA-aaaaaaaa"]);
+      expect(ids).not.toContain("2026-06-25-SECTOR_ROTATION_FROM_PM-NVDA-bbbbbbbb");
+    });
+  });
+
+  describe("rankCandidates — comparator has no type weight", () => {
+    it("compares only raw score — a lower-scoring CATALYST_ANCHORED never outranks a higher-scoring FADE_OVERSHOOT-typed candidate", () => {
+      const config = baseConfig();
+      const lowerCatalyst = makeCandidate({
+        signalType: "CATALYST_ANCHORED",
+        ticker: "AAA",
+        score: 0.5,
+        direction: "long",
+      });
+      const higherOther = makeCandidate({
+        signalType: "SENTIMENT_VELOCITY",
+        ticker: "BBB",
+        score: 0.6,
+        direction: "long",
+      });
+      const { ranked } = rankCandidates([lowerCatalyst, higherOther], config);
+      expect(ranked.map((c) => c.ticker)).toEqual(["BBB", "AAA"]);
+    });
+  });
+
+  describe("rankCandidates cardinality", () => {
+    const config = baseConfig();
+
+    it("9 candidates above 0.4: exactly 5 rank, exactly 3 sub-threshold, the 9th appears nowhere", () => {
+      const candidates = Array.from({ length: 9 }, (_, i) =>
+        makeCandidate({
+          signalType: "CATALYST_ANCHORED",
+          ticker: `T${i}`,
+          score: 0.9 - i * 0.05, // 0.90 .. 0.50, all above 0.4
+          direction: "long",
+        }),
+      );
+      const { ranked, subThreshold } = rankCandidates(candidates, config);
+      expect(ranked).toHaveLength(5);
+      expect(subThreshold).toHaveLength(3);
+      expect(ranked.map((c) => c.ticker)).toEqual(["T0", "T1", "T2", "T3", "T4"]);
+      expect(subThreshold.map((c) => c.ticker)).toEqual(["T5", "T6", "T7"]);
+      const allTickers = new Set([...ranked, ...subThreshold].map((c) => c.ticker));
+      expect(allTickers.has("T8")).toBe(false); // the 9th appears nowhere
+    });
+
+    it("2 candidates above 0.4 and 6 below: exactly 2 rank and exactly 3 sub-threshold", () => {
+      const above = [0.5, 0.45].map((score, i) =>
+        makeCandidate({ signalType: "CATALYST_ANCHORED", ticker: `A${i}`, score, direction: "long" }),
+      );
+      const below = [0.3, 0.25, 0.2, 0.15, 0.1, 0.05].map((score, i) =>
+        makeCandidate({ signalType: "CATALYST_ANCHORED", ticker: `B${i}`, score, direction: "long" }),
+      );
+      const { ranked, subThreshold } = rankCandidates([...above, ...below], config);
+      expect(ranked).toHaveLength(2);
+      expect(ranked.every((c) => c.score >= 0.4)).toBe(true);
+      expect(subThreshold).toHaveLength(3);
+      expect(subThreshold.map((c) => c.score)).toEqual([0.3, 0.25, 0.2]);
+    });
+
+    it("0 candidates above 0.4: ranked is empty, subThreshold holds top-3 below-floor with real scores", () => {
+      const below = [0.3, 0.25, 0.2, 0.15].map((score, i) =>
+        makeCandidate({ signalType: "CATALYST_ANCHORED", ticker: `B${i}`, score, direction: "long" }),
+      );
+      const { ranked, subThreshold } = rankCandidates(below, config);
+      expect(ranked).toEqual([]);
+      expect(subThreshold).toHaveLength(3);
+      expect(subThreshold.map((c) => c.score)).toEqual([0.3, 0.25, 0.2]);
+    });
+
+    it("0 candidates at all: both lists are empty and the run still succeeds", () => {
+      const { ranked, subThreshold } = rankCandidates([], config);
+      expect(ranked).toEqual([]);
+      expect(subThreshold).toEqual([]);
+    });
+  });
+
+  it("every sub-threshold candidate carries mode:'sub-threshold' and suggestedSizeUsd:null once the engine applies it", () => {
+    const config = baseConfig();
+    const below = [0.3, 0.25, 0.2].map((score, i) =>
+      makeCandidate({
+        signalType: "CATALYST_ANCHORED",
+        ticker: `B${i}`,
+        score,
+        direction: "long",
+        mode: "ranked", // deliberately wrong — proves the engine reassigns it, not rankCandidates itself
+        suggestedSizeUsd: 999,
+      }),
+    );
+    const { subThreshold } = rankCandidates(below, config);
+    const reassigned = subThreshold.map((c) => ({
+      ...c,
+      mode: "sub-threshold" as const,
+      suggestedSizeUsd: null,
+    }));
+    expect(reassigned.every((c) => c.mode === "sub-threshold" && c.suggestedSizeUsd === null)).toBe(
+      true,
+    );
+  });
+
+  it("ties break by nearer timeHorizonDays, then alphabetically by ticker, so a run is reproducible", () => {
+    const config = baseConfig();
+    const a = makeCandidate({
+      signalType: "CATALYST_ANCHORED",
+      ticker: "ZZZ",
+      score: 0.5,
+      direction: "long",
+      timeHorizonDays: 3,
+    });
+    const b = makeCandidate({
+      signalType: "SECTOR_ROTATION_FROM_PM",
+      ticker: "AAA",
+      score: 0.5,
+      direction: "short",
+      timeHorizonDays: 10,
+    });
+    const c = makeCandidate({
+      signalType: "SENTIMENT_VELOCITY",
+      ticker: "BBB",
+      score: 0.5,
+      direction: "long",
+      timeHorizonDays: 3,
+    });
+    // a and c are tied on both score and timeHorizonDays -> alphabetical (BBB before ZZZ)
+    const { ranked } = rankCandidates([b, a, c], config);
+    expect(ranked.map((r) => r.ticker)).toEqual(["BBB", "ZZZ", "AAA"]);
   });
 });
