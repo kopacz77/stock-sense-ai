@@ -203,7 +203,13 @@ export class StrategyEngine {
     const ranked: StrategyCandidate[] = above.slice(0, config.maxCandidatesPerDay).map((c) => ({
       ...c,
       mode: "ranked" as CandidateMode,
-      suggestedSizeUsd: suggestSizeUsd(vix.regime, c.signalType, config.assumedEquity, config),
+      suggestedSizeUsd: suggestSizeUsd(
+        vix.regime,
+        c.signalType,
+        config.assumedEquity,
+        config,
+        c.sizeModifier ?? 1,
+      ),
     }));
     const subThreshold: StrategyCandidate[] = below
       .slice(0, config.subThresholdCount)
