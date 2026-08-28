@@ -38,7 +38,7 @@ export interface ComputedLevels {
 }
 
 /** Single shared rounding helper so the CLI and the decision log never disagree by a float epsilon. */
-function round2(n: number): number {
+export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 

@@ -1,12 +1,19 @@
 /**
- * `strategy` CLI subcommand group (M2-05 Plan 11-02 Task 1 — `run`,
- * `accept`, `skip`. Task 3 adds `list-candidates`, `close`,
- * `decisions-summary`, `show-vix`.)
+ * `strategy` CLI subcommand group (M2-05 Plan 11-02). Ships all seven
+ * subcommands: `run`, `list-candidates`, `accept`, `skip`, `close`,
+ * `decisions-summary`, `show-vix`.
  *
  * Commander naming convention: hyphenated single-word subcommand names
  * only — `.command("list candidates")` would be interpreted as one
  * literal command name, not a nested subcommand (RESEARCH §6, same
  * precedent as `intel backlog-drain` / `intel themes-review`).
+ *
+ * Input validation (ASVS V5): every numeric option goes through
+ * `Number.isFinite` + a positivity check with `process.exit(2)` on
+ * failure — same shape as `intel backlog-drain`. An unknown
+ * `candidateId` prints a clear not-found error and exits 1 rather than
+ * silently no-op'ing. `--note` is always an opaque display string —
+ * never interpolated into a shell command or a regular expression.
  */
 
 import * as fs from "node:fs/promises";
@@ -17,26 +24,24 @@ import chalk from "chalk";
 import type { Command } from "commander";
 
 import { JsonlStore } from "../../market-intelligence/storage/jsonl-store.js";
+import { loadStrategyConfig } from "../config.js";
 import { DecisionLog } from "../decision-log.js";
+import { suggestSizeUsd } from "../sizing.js";
 import { StrategyEngine } from "../strategy-engine.js";
-import type { StrategyCandidate } from "../types.js";
+import type { StrategyCandidate, StrategyDecisionRecord } from "../types.js";
+import { VixProvider } from "../vix-provider.js";
 
-/**
- * `candidateId` always starts with its `asOfDate` (`YYYY-MM-DD-...`), so
- * the day's `candidates-YYYY-MM-DD.jsonl` file can be resolved directly
- * from the id without scanning every file. Task 3's `DecisionLog` grows a
- * fuller `findCandidate` that scans a range for callers that don't have
- * the date embedded; this is Task 1's minimal resolver for `accept`/`skip`.
- */
-async function findCandidateById(
-  strategyDataDir: string,
-  candidateId: string,
-): Promise<StrategyCandidate | undefined> {
-  const dateMatch = candidateId.match(/^(\d{4}-\d{2}-\d{2})-/);
-  if (!dateMatch) return undefined;
-  const store = new JsonlStore<StrategyCandidate>(strategyDataDir, "candidates");
-  const rows = await store.readDay(new Date(`${dateMatch[1]}T00:00:00.000Z`));
-  return rows.find((c) => c.candidateId === candidateId);
+const DEFAULT_STRATEGY_DATA_DIR = "./data/strategy";
+
+/** Shared `--date` parsing/validation for `run`, `list-candidates`, `show-vix`. */
+function parseDateOption(raw: string | undefined): Date {
+  if (raw === undefined) return new Date();
+  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    console.error(chalk.red(`--date must be YYYY-MM-DD (got "${raw}")`));
+    process.exit(2);
+  }
+  return parsed;
 }
 
 function formatCandidateLine(c: StrategyCandidate): string {
@@ -51,6 +56,12 @@ function formatCandidateLine(c: StrategyCandidate): string {
   );
 }
 
+function decisionStatusLabel(decision: StrategyDecisionRecord | undefined): string {
+  if (!decision) return chalk.yellow("pending");
+  if (decision.closedAt) return chalk.gray("closed");
+  return decision.decision === "accept" ? chalk.green("accepted") : chalk.gray("skipped");
+}
+
 export function registerStrategyCommands(program: Command): void {
   const strategy = program.command("strategy").description("AI-augmented strategy engine (M2-05)");
 
@@ -61,15 +72,7 @@ export function registerStrategyCommands(program: Command): void {
     .option("--max-candidates <n>", "Override maxCandidatesPerDay from config")
     .option("--dry-run", "Print candidates without writing candidates-*.jsonl", false)
     .action(async (opts: { date?: string; maxCandidates?: string; dryRun: boolean }) => {
-      let asOfDate = new Date();
-      if (opts.date !== undefined) {
-        const parsed = new Date(`${opts.date}T00:00:00.000Z`);
-        if (Number.isNaN(parsed.getTime())) {
-          console.error(chalk.red(`--date must be YYYY-MM-DD (got "${opts.date}")`));
-          process.exit(2);
-        }
-        asOfDate = parsed;
-      }
+      const asOfDate = parseDateOption(opts.date);
 
       let maxCandidates: number | undefined;
       if (opts.maxCandidates !== undefined) {
@@ -118,6 +121,46 @@ export function registerStrategyCommands(program: Command): void {
     });
 
   strategy
+    .command("list-candidates")
+    .description("List a date's candidates; hides skipped/closed ones unless asked")
+    .option("--date <YYYY-MM-DD>", "Date to list (default: today)")
+    .option("--include-skipped", "Also show skipped candidates", false)
+    .option("--include-closed", "Also show accepted-and-closed candidates", false)
+    .action(async (opts: { date?: string; includeSkipped: boolean; includeClosed: boolean }) => {
+      const date = parseDateOption(opts.date);
+      const dateIso = date.toISOString().split("T")[0] ?? "";
+
+      const candidatesStore = new JsonlStore<StrategyCandidate>(
+        DEFAULT_STRATEGY_DATA_DIR,
+        "candidates",
+      );
+      const candidates = await candidatesStore.readDay(date);
+
+      const log = new DecisionLog();
+      const decisions = await log.readDedupedByCandidateId(dateIso, dateIso);
+      const decisionById = new Map(decisions.map((d) => [d.candidateId, d]));
+
+      const rows = candidates.filter((c) => {
+        const decision = decisionById.get(c.candidateId);
+        if (!decision) return true;
+        if (decision.closedAt) return opts.includeClosed;
+        if (decision.decision === "skip") return opts.includeSkipped;
+        return true; // accepted, not yet closed
+      });
+
+      console.log(
+        chalk.bold(`Candidates for ${dateIso} (${rows.length} of ${candidates.length}):\n`),
+      );
+      if (rows.length === 0) {
+        console.log(chalk.gray("  (none)"));
+      }
+      for (const c of rows) {
+        const decision = decisionById.get(c.candidateId);
+        console.log(`[${decisionStatusLabel(decision)}] ${formatCandidateLine(c)}`);
+      }
+    });
+
+  strategy
     .command("accept")
     .description("Accept a candidate, optionally overriding entry/target/stop/size")
     .argument("<candidateId>")
@@ -147,13 +190,31 @@ export function registerStrategyCommands(program: Command): void {
           overrides[key] = n;
         }
 
-        const candidate = await findCandidateById("./data/strategy", candidateId);
+        const log = new DecisionLog();
+        const candidate = await log.findCandidate(candidateId);
         if (!candidate) {
           console.error(chalk.red(`No candidate found with id "${candidateId}"`));
           process.exit(1);
         }
 
-        const log = new DecisionLog();
+        if (overrides.size !== undefined) {
+          const config = await loadStrategyConfig();
+          const maxRegimeSize = suggestSizeUsd(
+            "calm",
+            candidate.signalType,
+            config.assumedEquity,
+            config,
+          );
+          if (overrides.size > 2 * maxRegimeSize) {
+            console.warn(
+              chalk.yellow(
+                `Warning: --size ${overrides.size} is more than 2x the largest regime size ` +
+                  `(${maxRegimeSize}) for ${candidate.signalType} at assumedEquity=${config.assumedEquity}. Proceeding — the operator is trusted.`,
+              ),
+            );
+          }
+        }
+
         const record = await log.recordAccept(candidate, overrides, opts.note);
         console.log(chalk.green(`Accepted ${record.candidateId}`));
         console.log(
@@ -169,15 +230,98 @@ export function registerStrategyCommands(program: Command): void {
     .argument("<candidateId>")
     .option("--note <text>")
     .action(async (candidateId: string, opts: { note?: string }) => {
-      const candidate = await findCandidateById("./data/strategy", candidateId);
+      const log = new DecisionLog();
+      const candidate = await log.findCandidate(candidateId);
       if (!candidate) {
         console.error(chalk.red(`No candidate found with id "${candidateId}"`));
         process.exit(1);
       }
 
-      const log = new DecisionLog();
       const record = await log.recordSkip(candidate, opts.note);
       console.log(chalk.gray(`Skipped ${record.candidateId}`));
+    });
+
+  strategy
+    .command("close")
+    .description("Log a realized close against a previously accepted candidateId")
+    .argument("<candidateId>")
+    .requiredOption("--exit-price <n>")
+    .option("--exit-date <YYYY-MM-DD>")
+    .option("--note <text>")
+    .action(
+      async (
+        candidateId: string,
+        opts: { exitPrice: string; exitDate?: string; note?: string },
+      ) => {
+        const exitPrice = Number(opts.exitPrice);
+        if (!Number.isFinite(exitPrice) || exitPrice <= 0) {
+          console.error(
+            chalk.red(`--exit-price must be a positive number (got "${opts.exitPrice}")`),
+          );
+          process.exit(2);
+        }
+        if (
+          opts.exitDate !== undefined &&
+          Number.isNaN(new Date(`${opts.exitDate}T00:00:00.000Z`).getTime())
+        ) {
+          console.error(chalk.red(`--exit-date must be YYYY-MM-DD (got "${opts.exitDate}")`));
+          process.exit(2);
+        }
+
+        const log = new DecisionLog();
+        try {
+          const record = await log.recordClose(candidateId, {
+            exitPrice,
+            exitDate: opts.exitDate,
+            note: opts.note,
+          });
+          console.log(chalk.green(`Closed ${record.candidateId}`));
+          console.log(
+            `  exit=${record.closeExitPrice} pnlUsd=${record.closeRealizedPnlUsd} ` +
+              `pnlPct=${record.closeRealizedPnlPct}%`,
+          );
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          process.exit(1);
+        }
+      },
+    );
+
+  strategy
+    .command("decisions-summary")
+    .description("Report the accept/skip rate over a trailing window (D-13 sweet spot: 20-40%)")
+    .option("--days <n>", "Trailing window in days", "30")
+    .action(async (opts: { days: string }) => {
+      const days = Number(opts.days);
+      if (!Number.isFinite(days) || days <= 0) {
+        console.error(chalk.red("--days must be a positive number"));
+        process.exit(2);
+      }
+
+      const log = new DecisionLog();
+      const stats = await log.acceptSkipStats(days);
+      console.log(chalk.bold(`Accept/skip over the trailing ${days} days:`));
+      console.log(`  accepted=${stats.accepted} skipped=${stats.skipped} total=${stats.total}`);
+      console.log(`  acceptRate=${(stats.acceptRate * 100).toFixed(1)}% (${stats.band})`);
+      console.log(
+        chalk.gray(
+          "  Sweet spot is 20-40% — below 10% may mean signal types are wrong; " +
+            "above 60% may mean the engine isn't being selective enough.",
+        ),
+      );
+    });
+
+  strategy
+    .command("show-vix")
+    .description("Show the VIX close/regime for a date")
+    .option("--date <YYYY-MM-DD>", "Date to resolve (default: today)")
+    .action(async (opts: { date?: string }) => {
+      const date = parseDateOption(opts.date);
+      const provider = new VixProvider();
+      const quote = await provider.getForDate(date);
+      console.log(
+        `${quote.date}: VIX ${quote.close.toFixed(2)} (${quote.regime}, source=${quote.source})`,
+      );
     });
 }
 
