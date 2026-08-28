@@ -302,11 +302,13 @@ Plans:
 - [x] 11-03-PLAN.md — Shared catalyst-loader extraction + CATALYST_ANCHORED module across both scheduled-macro and LLM-emergent catalyst populations (Wave 2)
 - [x] 11-04-PLAN.md — Scored-day coverage gate + SENTIMENT_VELOCITY (gated) + FADE_OVERSHOOT (shadow-only) (Wave 2)
 - [x] 11-05-PLAN.md — Engine integration: four-module registry, core/gated/shadow modes, cross-type ranking (top-5, 0.4 floor, next-3), full nine-subcommand CLI (Wave 3)
-- [ ] 11-06-PLAN.md — Live-window backtest gate over the real 2026 substrate + `docs/M2-05_BACKTEST_GAP.md` (Wave 4)
+- [x] 11-06-PLAN.md — Live-window backtest gate over the real 2026 substrate + `docs/M2-05_BACKTEST_GAP.md` (Wave 4)
 - [ ] 11-07-PLAN.md — Minimal `/strategy` web route + three validated `/api/strategy/*` endpoints (Wave 4)
 - [ ] 11-08-PLAN.md — Iran-ceasefire worked example, phase acceptance run, validation sign-off (Wave 5)
 
 **Estimated effort**: 5-7 days
+
+**Future work (deferred, not scoped for v1)**: the CONTEXT-locked per-regime 2018-2025 backtest bar (Sharpe > 0.5 per regime, MaxDD < 25%, negative bull Sharpe = automatic fail, combined > best single type) is structurally unevaluable against this substrate — see `docs/M2-05_BACKTEST_GAP.md` for the full analysis. Two paths would unlock it: (A) a standalone Polymarket 2023-2025 re-mapping project (net-new curation, comparable in size to the original `PmMappingEngine` seeding), or (B) accumulating enough live 2026-onward trading history for calendar 2026 to itself be regime-classified and added to `regime-segmenter.ts`'s `REGIMES`. Neither is scheduled; this is a note for a future milestone, not a new phase.
 
 ---
 
