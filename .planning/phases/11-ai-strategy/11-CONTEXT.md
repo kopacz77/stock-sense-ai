@@ -110,6 +110,12 @@ Turn the M2-04 per-ticker-day rollup + active calendar catalysts + PM-derived si
 - File paths under `data/strategy/` and module paths under `src/strategy/`
 - Whether to wire the engine into the existing scheduler `runCycle` or run it as a separate "strategy tick" (e.g., once per market open). Planner decides based on cost.
 
+
+### Article intake thrift (operator direction, 2026-08-27)
+- **Operator's framing:** "find a pattern from all of these articles so we pull the minimum number of data points without being wasteful." The big global movers are US companies (clearly first), China a big second, then war-zone actions. Not an oversimplification to encode — a prioritisation to encode.
+- **Evidence (18,139 LLM-scored articles, 2026-06-02 → 07-26, dedup by article, "high" = materiality ≥ 0.5):** only **7%** of everything we score is high-materiality. **73%** of the high-materiality mass comes from ticker-tagged Finnhub (US company) news; macro RSS supplies 26%. By topic: China keywords have the best hit-rate (12%, n=667), earnings 10%, war/geo 6% (10% of all high), Fed/rates 9%, oil 7%. Low-yield feeds: `marketwatch-top` 2%, `google-world` 3%, crypto keywords 2%, `cnbc-markets` 0% — together ~15% of intake for ~6% of signal. Articles matching no topic keyword and no ticker: 43% of intake, 4% hit-rate.
+- **Decision:** M2-05 plans MUST include a cheap, pre-LLM **materiality pre-screen** trained/validated on the existing scored corpus (no new LLM calls): rank incoming articles by predicted P(materiality ≥ 0.5) from source feed + ticker-tag + topic-bucket features (US-company > China > war-zone > Fed/rates > oil; demote crypto / world-general / marketwatch-top), and feed the scorer highest-ranked first under the existing 500/day soft cap (`isPriorityArticle` in `cycle-runner.ts` is the hook to replace). Acceptance: on a held-out June–July week, scoring only the top 50% by pre-screen rank retains ≥ 85% of high-materiality articles.
+- **Boundary:** the pre-screen decides *what to score*; it must not alter scores or invent sentiment. Scoring stays LLM-only (local Qwen3-14B for now; DeepSeek evaluated after M2-05 ships).
 </decisions>
 
 <specifics>
