@@ -120,6 +120,12 @@ The operator's real-world track record (turned $10k → $40k during 2020-2021 vi
 
 ---
 
+### 2026-08-28 — Phase M2-05 (AI-Augmented Strategy Engine) complete
+- `src/strategy/` ships: four signal modules (CATALYST_ANCHORED + SECTOR_ROTATION_FROM_PM core, SENTIMENT_VELOCITY gated on scored-day coverage, FADE_OVERSHOOT shadow-only), cross-type ranking (top-5, 0.4 floor, next-3), VIX-regime sizing, per-type levels, accept/skip decision log, 9-subcommand `strategy` CLI, minimal `/strategy` web route, live-window backtest gate (`docs/M2-05_BACKTEST_GAP.md`).
+- Honest, operator-accepted gaps: backtest thin-sample FAIL under Yahoo rate-limiting; article pre-screen retention 0.696 < 0.85; calibration (0.4 floor, VIX 15/25) unchanged pending live data.
+- Intake: LLM scoring gated by a pure materiality pre-screen (US companies > China > war/geo); LM Studio stays "as needed" with `intel backlog-drain`; DeepSeek API evaluated after this phase.
+- Next: gap plan 11-09 — after-tax / after-fee target hurdle with selectable jurisdiction (Ontario now, California later; both rule sets complete).
+
 ## Technical Context
 
 ### Stack
@@ -149,4 +155,4 @@ Full documentation in `.planning/codebase/`. Architecture stays layered (CLI/Web
 
 ---
 
-*Last updated: 2026-05-23 — Milestone 2 pivot*
+*Last updated: 2026-08-28 — Phase M2-05 complete; gap plan 11-09 (tax/fee hurdle) next*
