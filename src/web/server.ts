@@ -15,7 +15,7 @@ import { TechnicalIndicators } from "../analysis/technical-indicators.js";
 import { JsonlStore } from "../market-intelligence/storage/jsonl-store.js";
 import { loadStrategyConfig } from "../strategy/config.js";
 import { DecisionLog } from "../strategy/decision-log.js";
-import type { StrategyCandidate } from "../strategy/types.js";
+import type { StrategyCandidate, StrategyDecisionRecord } from "../strategy/types.js";
 import type { VixQuote } from "../strategy/vix-provider.js";
 import {
   authMiddleware,
@@ -60,16 +60,21 @@ const MonitoringStartSchema = z.object({
 // malformed or hostile body can never write NaN/Infinity/negative levels
 // into the decision log; note is capped so a skip/accept body can't be used
 // to smuggle an oversized payload past the 1mb JSON body limit.
+// `force: true` bypasses the CR-02 409 guard below (already-decided
+// candidate) for an explicit operator "amend" action; omitted/false is the
+// default safe path.
 const StrategyAcceptSchema = z.object({
   entry: z.number().positive().finite().optional(),
   target: z.number().positive().finite().optional(),
   stop: z.number().positive().finite().optional(),
   sizeUsd: z.number().positive().finite().optional(),
   note: z.string().max(500).optional(),
+  force: z.boolean().optional(),
 });
 
 const StrategySkipSchema = z.object({
   note: z.string().max(500).optional(),
+  force: z.boolean().optional(),
 });
 
 const DiscoverRequestSchema = z.object({
@@ -97,6 +102,40 @@ const AUTH_REQUIRED = process.env.AUTH_REQUIRED === "true";
 
 // Rate limiting map for basic protection
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+
+/**
+ * CR-02: `GET /api/strategy/candidates` never joined against the decision
+ * log, so `StrategyPage` tracked accept/skip purely in local React state —
+ * a reload lost it and let the operator re-accept (and silently
+ * overwrite) an already-decided candidate. Attach the deduped decision
+ * status here so the frontend can hydrate on every load, exported for
+ * direct unit testing.
+ */
+export function attachDecisionStatus(
+  candidate: StrategyCandidate,
+  decisionByCandidateId: Map<string, StrategyDecisionRecord>,
+): StrategyCandidate & { decision: "accept" | "skip" | null } {
+  const decision = decisionByCandidateId.get(candidate.candidateId);
+  return { ...candidate, decision: decision?.decision ?? null };
+}
+
+/**
+ * Find the current live decision (if any) for `candidate`, reading the
+ * decision log from the candidate's own day through today — same
+ * `[asOfDate, today]` range as `list-candidates`' decision join
+ * (`strategy-commands.ts`), because decisions are filed under the day
+ * they were MADE (`decidedAt`), not the candidate's `asOfDate`. Exported
+ * for direct unit testing.
+ */
+export async function findLiveDecisionForCandidate(
+  decisionLog: DecisionLog,
+  candidate: StrategyCandidate,
+): Promise<StrategyDecisionRecord | undefined> {
+  const todayIso = new Date().toISOString().split("T")[0] ?? candidate.asOfDate;
+  const endIso = todayIso > candidate.asOfDate ? todayIso : candidate.asOfDate;
+  const decisions = await decisionLog.readDedupedByCandidateId(candidate.asOfDate, endIso);
+  return decisions.find((d) => d.candidateId === candidate.candidateId);
+}
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
 const RATE_LIMIT_MAX = 100; // requests per window
 
@@ -582,9 +621,29 @@ export class WebServer {
           return;
         }
 
-        const ranked = candidates.filter((c) => c.mode === "ranked");
-        const subThreshold = candidates.filter((c) => c.mode === "sub-threshold");
-        const shadow = candidates.filter((c) => c.mode === "shadow");
+        // CR-02: join the latest decision per candidate so a page reload
+        // hydrates already-accepted/skipped cards instead of losing that
+        // state and letting the operator re-accept over their own prior
+        // decision. Same [asOfDate, today] range as list-candidates'
+        // decision join (strategy-commands.ts) — decisions are filed under
+        // the day they were MADE, not the candidate's asOfDate.
+        const decisionLog = new DecisionLog({ strategyDataDir: this.strategyDataDir });
+        const todayIso = new Date().toISOString().split("T")[0] ?? asOfDate;
+        const decisionRecords = await decisionLog.readDedupedByCandidateId(
+          asOfDate,
+          todayIso > asOfDate ? todayIso : asOfDate,
+        );
+        const decisionByCandidateId = new Map(decisionRecords.map((d) => [d.candidateId, d]));
+
+        const ranked = candidates
+          .filter((c) => c.mode === "ranked")
+          .map((c) => attachDecisionStatus(c, decisionByCandidateId));
+        const subThreshold = candidates
+          .filter((c) => c.mode === "sub-threshold")
+          .map((c) => attachDecisionStatus(c, decisionByCandidateId));
+        const shadow = candidates
+          .filter((c) => c.mode === "shadow")
+          .map((c) => attachDecisionStatus(c, decisionByCandidateId));
 
         // Prefer the VIX quote StrategyEngine cached for this exact date;
         // fall back to reconstructing it from any persisted candidate's own
@@ -642,12 +701,30 @@ export class WebServer {
           });
           return;
         }
-        const { entry, target, stop, sizeUsd, note } = parseResult.data;
+        const { entry, target, stop, sizeUsd, note, force } = parseResult.data;
 
         const decisionLog = new DecisionLog({ strategyDataDir: this.strategyDataDir });
         const candidate = await decisionLog.findCandidate(req.params.id);
         if (!candidate) {
           res.status(404).json({ error: `Unknown candidateId "${req.params.id}"` });
+          return;
+        }
+
+        // CR-02: the web path (unlike the CLI, which already permits
+        // re-accept) has no confirmation step — a page reload could
+        // otherwise silently overwrite an operator's earlier accept/skip.
+        // Require an explicit force:true to amend an already-decided
+        // candidate.
+        const existingDecision = await findLiveDecisionForCandidate(decisionLog, candidate);
+        if (existingDecision && !force) {
+          res.status(409).json({
+            error:
+              `candidateId "${req.params.id}" already has a "${existingDecision.decision}" decision ` +
+              `recorded at ${existingDecision.decidedAt}` +
+              `${existingDecision.closedAt ? ` (closed at ${existingDecision.closedAt})` : ""}. ` +
+              "Pass force: true to record a new decision anyway.",
+            decision: existingDecision,
+          });
           return;
         }
 
@@ -690,12 +767,28 @@ export class WebServer {
           });
           return;
         }
-        const { note } = parseResult.data;
+        const { note, force } = parseResult.data;
 
         const decisionLog = new DecisionLog({ strategyDataDir: this.strategyDataDir });
         const candidate = await decisionLog.findCandidate(req.params.id);
         if (!candidate) {
           res.status(404).json({ error: `Unknown candidateId "${req.params.id}"` });
+          return;
+        }
+
+        // CR-02: same guard as accept — the web path has no confirmation
+        // step, so a reload could otherwise silently overwrite an
+        // operator's earlier accept/skip.
+        const existingDecision = await findLiveDecisionForCandidate(decisionLog, candidate);
+        if (existingDecision && !force) {
+          res.status(409).json({
+            error:
+              `candidateId "${req.params.id}" already has a "${existingDecision.decision}" decision ` +
+              `recorded at ${existingDecision.decidedAt}` +
+              `${existingDecision.closedAt ? ` (closed at ${existingDecision.closedAt})` : ""}. ` +
+              "Pass force: true to record a new decision anyway.",
+            decision: existingDecision,
+          });
           return;
         }
 

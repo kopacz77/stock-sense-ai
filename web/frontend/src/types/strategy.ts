@@ -65,6 +65,13 @@ export interface StrategyCandidate {
   suggestedSizeUsd: number | null;
   atrPeriodUsed: 3 | 5 | 10;
   atrValue: number;
+  /**
+   * CR-02: the server joins this candidate against the decision log
+   * (`GET /api/strategy/candidates`) so a page reload can hydrate
+   * already-decided cards instead of losing that state to local-only
+   * React state. `null` when no accept/skip has been recorded yet.
+   */
+  decision?: 'accept' | 'skip' | null;
 }
 
 export interface SkippedSignalType {

@@ -48,6 +48,17 @@ export function StrategyPage() {
     try {
       const result = await api.getStrategyCandidates(dateParam);
       setData(result);
+      // CR-02: hydrate `decisions` from the server's joined decision status
+      // on every load (mount, refresh, date change) instead of relying on
+      // local-only state that resets on reload and would otherwise let the
+      // operator silently re-accept over their own prior decision.
+      const hydrated: Record<string, 'accept' | 'skip'> = {};
+      for (const c of [...result.ranked, ...result.subThreshold, ...result.shadow]) {
+        if (c.decision === 'accept' || c.decision === 'skip') {
+          hydrated[c.candidateId] = c.decision;
+        }
+      }
+      setDecisions(hydrated);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
