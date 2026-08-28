@@ -299,7 +299,7 @@ Plans:
 
 - [x] 11-01-PLAN.md — Article-intake materiality pre-screen: pure pre-LLM ranking replacing `isPriorityArticle`, ≥ 85% high-materiality retention at top-50% on a held-out week (Wave 1)
 - [x] 11-02-PLAN.md — TRACER: SECTOR_ROTATION_FROM_PM end-to-end (types, config, VIX provider, public ATR series, engine, decision log, `strategy` CLI) + generalized levels/sizing (Wave 1)
-- [ ] 11-03-PLAN.md — Shared catalyst-loader extraction + CATALYST_ANCHORED module across both scheduled-macro and LLM-emergent catalyst populations (Wave 2)
+- [x] 11-03-PLAN.md — Shared catalyst-loader extraction + CATALYST_ANCHORED module across both scheduled-macro and LLM-emergent catalyst populations (Wave 2)
 - [ ] 11-04-PLAN.md — Scored-day coverage gate + SENTIMENT_VELOCITY (gated) + FADE_OVERSHOOT (shadow-only) (Wave 2)
 - [ ] 11-05-PLAN.md — Engine integration: four-module registry, core/gated/shadow modes, cross-type ranking (top-5, 0.4 floor, next-3), full nine-subcommand CLI (Wave 3)
 - [ ] 11-06-PLAN.md — Live-window backtest gate over the real 2026 substrate + `docs/M2-05_BACKTEST_GAP.md` (Wave 4)
