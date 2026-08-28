@@ -7,6 +7,11 @@ import type {
   TechnicalIndicatorData,
   SystemSettings,
 } from '@/types/trading';
+import type {
+  StrategyCandidatesResponse,
+  AcceptCandidateOverrides,
+  DecisionRecordResponse,
+} from '@/types/strategy';
 
 const API_BASE = '/api';
 
@@ -84,6 +89,34 @@ export const api = {
   // Settings endpoints
   async getSettings(): Promise<SystemSettings> {
     const response = await fetch(`${API_BASE}/settings`);
+    return handleResponse(response);
+  },
+
+  // Strategy endpoints (11-07) — the minimal /strategy dashboard route.
+  async getStrategyCandidates(date?: string): Promise<StrategyCandidatesResponse> {
+    const query = date ? `?date=${encodeURIComponent(date)}` : '';
+    const response = await fetch(`${API_BASE}/strategy/candidates${query}`);
+    return handleResponse(response);
+  },
+
+  async acceptCandidate(
+    id: string,
+    overrides: AcceptCandidateOverrides = {}
+  ): Promise<DecisionRecordResponse> {
+    const response = await fetch(`${API_BASE}/strategy/candidates/${encodeURIComponent(id)}/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(overrides),
+    });
+    return handleResponse(response);
+  },
+
+  async skipCandidate(id: string, note?: string): Promise<DecisionRecordResponse> {
+    const response = await fetch(`${API_BASE}/strategy/candidates/${encodeURIComponent(id)}/skip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(note !== undefined ? { note } : {}),
+    });
     return handleResponse(response);
   },
 };

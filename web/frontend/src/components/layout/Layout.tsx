@@ -2,13 +2,14 @@ import { ReactNode } from 'react';
 import { Header } from './Header';
 import { Tabs, Tab } from '@/components/ui/Tabs';
 import { useUIStore } from '@/stores/useUIStore';
-import { Activity, Compass, LineChart, Globe, Settings, HelpCircle } from 'lucide-react';
+import { Activity, Compass, LineChart, Globe, Target, Settings, HelpCircle } from 'lucide-react';
 
 const tabs: Tab[] = [
   { id: 'monitoring', label: 'Monitoring', icon: <Activity className="w-4 h-4" /> },
   { id: 'discovery', label: 'Discovery', icon: <Compass className="w-4 h-4" /> },
   { id: 'analysis', label: 'Analysis', icon: <LineChart className="w-4 h-4" /> },
   { id: 'market', label: 'Market', icon: <Globe className="w-4 h-4" /> },
+  { id: 'strategy', label: 'Strategy', icon: <Target className="w-4 h-4" /> },
   { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
   { id: 'help', label: 'Help', icon: <HelpCircle className="w-4 h-4" /> },
 ];

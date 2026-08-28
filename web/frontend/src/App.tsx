@@ -7,6 +7,7 @@ import { MonitoringPage } from '@/pages/MonitoringPage';
 import { DiscoveryPage } from '@/pages/DiscoveryPage';
 import { AnalysisPage } from '@/pages/AnalysisPage';
 import { MarketPage } from '@/pages/MarketPage';
+import { StrategyPage } from '@/pages/StrategyPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { HelpPage } from '@/pages/HelpPage';
 import { useUIStore } from '@/stores/useUIStore';
@@ -31,7 +32,7 @@ function TabRouteSync() {
   // Sync activeTab from URL on mount and URL changes
   useEffect(() => {
     const pathSegment = location.pathname.split('/')[1] || 'monitoring';
-    const validTabs = ['monitoring', 'discovery', 'analysis', 'market', 'settings', 'help'];
+    const validTabs = ['monitoring', 'discovery', 'analysis', 'market', 'strategy', 'settings', 'help'];
     if (validTabs.includes(pathSegment) && pathSegment !== activeTab) {
       setActiveTab(pathSegment as typeof activeTab);
     }
@@ -101,6 +102,7 @@ function AppContent() {
           <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/analysis/:symbol" element={<AnalysisPage />} />
           <Route path="/market" element={<MarketPage />} />
+          <Route path="/strategy" element={<StrategyPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="*" element={<Navigate to="/monitoring" replace />} />
