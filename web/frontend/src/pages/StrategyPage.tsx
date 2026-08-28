@@ -279,6 +279,17 @@ export function StrategyPage() {
   );
 }
 
+// WR-03: `Number('')` is `0`, so a cleared numeric field previously sent
+// `entry: 0`/`target: 0`/`stop: 0` straight to the API, which the server
+// correctly rejected (positive() schema) but with only a generic toast —
+// no indication of which field was the problem. A field is valid only
+// when it parses to a finite, strictly positive number.
+function isPositiveNumberString(value: string): boolean {
+  if (value.trim() === '') return false;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0;
+}
+
 interface CandidateCardProps {
   candidate: StrategyCandidate;
   index: number;
@@ -298,12 +309,27 @@ function CandidateCard({ candidate, index, decision, onAccepted, onSkipped }: Ca
   );
   const [note, setNote] = useState('');
 
+  // WR-03: entry/target/stop are always required (the CLI's `--entry` etc.
+  // are optional flags, but this form pre-fills them, so clearing one is a
+  // deliberate "make this blank" edit, not "use the suggestion" — the
+  // suggestion is right there via WR-02's diff-against-suggestion check).
+  // Size is optional; only validated when non-empty.
+  const entryValid = isPositiveNumberString(entry);
+  const targetValid = isPositiveNumberString(target);
+  const stopValid = isPositiveNumberString(stop);
+  const sizeUsdValid = sizeUsd.trim() === '' || isPositiveNumberString(sizeUsd);
+  const acceptFormValid = entryValid && targetValid && stopValid && sizeUsdValid;
+
   const directionColor = candidate.direction === 'long' ? 'text-success-400' : 'text-danger-400';
   const DirectionIcon = candidate.direction === 'long' ? TrendingUp : TrendingDown;
   const borderColor =
     candidate.direction === 'long' ? 'border-l-success-500' : 'border-l-danger-500';
 
   const submitAccept = async () => {
+    // WR-03: defense in depth — the Confirm Accept button is already
+    // disabled while invalid, but never trust client-side disabled state
+    // alone as the only gate before a network call.
+    if (!acceptFormValid) return;
     setSubmitting(true);
     try {
       // WR-02: only send a field when the operator actually edited it away
@@ -451,7 +477,11 @@ function CandidateCard({ candidate, index, decision, onAccepted, onSkipped }: Ca
                 onChange={(e) => setEntry(e.target.value)}
                 className="w-full mt-1"
                 step="any"
+                aria-invalid={!entryValid}
               />
+              {!entryValid && (
+                <span className="block mt-1 text-danger-400">Required, must be &gt; 0</span>
+              )}
             </label>
             <label className="text-xs text-dark-text-tertiary">
               Target
@@ -461,7 +491,11 @@ function CandidateCard({ candidate, index, decision, onAccepted, onSkipped }: Ca
                 onChange={(e) => setTarget(e.target.value)}
                 className="w-full mt-1"
                 step="any"
+                aria-invalid={!targetValid}
               />
+              {!targetValid && (
+                <span className="block mt-1 text-danger-400">Required, must be &gt; 0</span>
+              )}
             </label>
             <label className="text-xs text-dark-text-tertiary">
               Stop
@@ -471,7 +505,11 @@ function CandidateCard({ candidate, index, decision, onAccepted, onSkipped }: Ca
                 onChange={(e) => setStop(e.target.value)}
                 className="w-full mt-1"
                 step="any"
+                aria-invalid={!stopValid}
               />
+              {!stopValid && (
+                <span className="block mt-1 text-danger-400">Required, must be &gt; 0</span>
+              )}
             </label>
             <label className="text-xs text-dark-text-tertiary">
               Size (USD)
@@ -481,7 +519,11 @@ function CandidateCard({ candidate, index, decision, onAccepted, onSkipped }: Ca
                 onChange={(e) => setSizeUsd(e.target.value)}
                 className="w-full mt-1"
                 step="any"
+                aria-invalid={!sizeUsdValid}
               />
+              {!sizeUsdValid && (
+                <span className="block mt-1 text-danger-400">Must be &gt; 0 or left blank</span>
+              )}
             </label>
           </div>
           <label className="text-xs text-dark-text-tertiary block">
@@ -495,7 +537,13 @@ function CandidateCard({ candidate, index, decision, onAccepted, onSkipped }: Ca
             />
           </label>
           <div className="flex gap-2">
-            <Button variant="success" size="sm" onClick={submitAccept} loading={submitting}>
+            <Button
+              variant="success"
+              size="sm"
+              onClick={submitAccept}
+              loading={submitting}
+              disabled={!acceptFormValid}
+            >
               Confirm Accept
             </Button>
             <Button variant="secondary" size="sm" onClick={() => setMode('idle')} disabled={submitting}>
