@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 11
 status: executing
-stopped_at: Completed 11-07-PLAN.md
-last_updated: "2026-08-28T20:01:54.861Z"
+stopped_at: Completed 11-08-PLAN.md — Phase 11 (M2-05) execution complete, operator-approved
+last_updated: "2026-08-28T20:28:40.366Z"
 progress:
   total_phases: 0
   completed_phases: 0
@@ -22,9 +22,9 @@ current_phase_name: ai-strategy
 |-------|-------|
 | Active Milestone | M2 — AI-Augmented Swing Trading |
 | Current Phase | 11 |
-| Status | Executing Phase 11 |
+| Status | Phase 11 execution complete (8/8 plans), operator-approved; pending `/gsd-verify-work` |
 | Last Pivot | 2026-05-23 |
-| Last Updated | 2026-08-27 (scorer outage fixed; backlog-drain shipped; M2-05 planning next) |
+| Last Updated | 2026-08-28 (11-08 phase close-out: worked example, honest acceptance numbers, operator approved closing the phase) |
 
 ---
 
@@ -49,7 +49,7 @@ current_phase_name: ai-strategy
 | M2-02 | Alpaca Paper Integration | pending | — | — |
 | M2-03 | Market Intelligence Bot | ✅ COMPLETE | 2026-05-23 | 2026-05-28 |
 | M2-04 | LLM Trade-Signal Layer | ✅ COMPLETE | 2026-05-31 | 2026-05-31 |
-| M2-05 | AI-Augmented Strategy Engine | 🔄 IN PROGRESS (7/8 plans: 11-01..11-07 done) | 2026-08-27 | — |
+| M2-05 | AI-Augmented Strategy Engine | 🔄 EXECUTION COMPLETE (8/8 plans, operator-approved 2026-08-28); pending `/gsd-verify-work` | 2026-08-27 | — |
 | M2-06 | Hard Risk Management | pending | — | — |
 | M2-07 | Live Execution + Tax Tracking | pending | — | — |
 
@@ -57,7 +57,7 @@ current_phase_name: ai-strategy
 
 ## Active Work
 
-**Current Focus**: **M2-05 planning** on the substrate as it actually exists (see data reality below), then draining the 15k-article backlog so June–August rollups carry article sentiment.
+**Current Focus**: **M2-05 (Phase 11) is execution-complete and operator-approved** (8/8 plans, 2026-08-28). Next: run the verifier (`/gsd-verify-work` or equivalent) to formally close the phase, then scope gap plan **11-09** (after-tax/after-fees target hurdle, per `11-CONTEXT.md`).
 
 **Data reality (2026-08-27)** — what M2-05 can actually train/validate on:
 
@@ -72,11 +72,12 @@ current_phase_name: ai-strategy
 
 **Next Actions**:
 
-1. Drain the backlog when LM Studio can be up for ~10 h (`pnpm intel backlog-drain --manage-server`), or switch provider first and drain via API.
-2. `/gsd-execute-phase 11` — M2-05 is planned: 8 plans in 5 waves (wave 1: `11-01` article-intake pre-screen ∥ `11-02` tracer; wave 2: `11-03` CATALYST_ANCHORED ∥ `11-04` SENTIMENT/FADE; wave 3: `11-05` engine integration; wave 4: `11-06` live-window backtest ∥ `11-07` web route; wave 5: `11-08` worked example + acceptance). Backtest scope changed by operator decision 2026-08-27: the per-regime 2018-2025 bar is structurally unevaluable, so v1 ships a live-window gate over the real 2026 substrate, labelled interim (see the M2-05 section of ROADMAP.md).
-3. Decide the LLM provider question (above) — it changes how fast the corpus grows and whether the scorer-down failure mode can recur.
-4. Operator manual setup carried over: FRED_API_KEY (8 macro feeds), `config/fda-pdufa-seed.json` quarterly, `config/opec-schedule-seed.json` + `EIA_HOLIDAY_SHIFTS` each December.
-5. Weekly: `intel themes-review` + `intel pm-mappings-review`.
+1. Run the phase verifier (`/gsd-verify-work` or equivalent) to formally close Phase 11 (M2-05) — execution is done, operator has approved, but the verifier gate is separate.
+2. Scope gap plan **11-09** (after-tax/after-fees target hurdle) — locked in `11-CONTEXT.md` (commits `9f57408`, `b5404ca`), queued by the operator immediately after phase verification.
+3. Drain the score backlog (`pnpm intel backlog-drain --manage-server`) to unblock `SENTIMENT_VELOCITY`/`FADE_OVERSHOOT` coverage — a documented M2-05 follow-up, not a blocker.
+4. Decide the LLM provider question (above) — it changes how fast the corpus grows and whether the scorer-down failure mode can recur.
+5. Operator manual setup carried over: FRED_API_KEY (8 macro feeds), `config/fda-pdufa-seed.json` quarterly, `config/opec-schedule-seed.json` + `EIA_HOLIDAY_SHIFTS` each December, and confirm the 8 FOMC seed dates in `config/fomc-schedule-seed.json` against federalreserve.gov.
+6. Weekly: `intel themes-review` + `intel pm-mappings-review`.
 
 **M2-05 scope grows** (carried over from M2-01 verdict): previous assumption was "layer AI on top of MomentumStrategy + MeanReversionStrategy". With both DISCARD'd, M2-05 must design fresh signals first (catalyst-driven entries from M2-04, volatility-breakout, sector-rotation rules). Plan M2-05 phase scoping when M2-04 is closer to done.
 
@@ -149,6 +150,7 @@ current_phase_name: ai-strategy
 - [Phase ?]: 11-05: four-module registry (defaultSignalModules), cross-type ranking (resolveTickerCollisions/rankCandidates), full 8-of-9 strategy CLI (show-substrate, --types, --include-shadow) shipped; verified against real data/intel — 5 ranked CATALYST_ANCHORED, SENTIMENT_VELOCITY correctly gated off, 12 FADE_OVERSHOOT shadow entries never sized — see 11-05-SUMMARY.md
 - [Phase ?]: 11-06: live-window backtest gate (D-15) shipped end-to-end; docs/M2-05_BACKTEST_GAP.md records the structural per-regime gap; real 5-day live run recorded combined Sharpe -5.01 (FAIL, thin-sample) after live Yahoo Finance rate-limiting made the full 20-day/90-day windows impractical this session — see 11-06-SUMMARY.md
 - [Phase ?]: 11-07: minimal /strategy web route + three /api/strategy/* endpoints shipped, operator-approved after checkpoint fixed a pre-existing React Router tab/URL ping-pong (also fixed a /discovery deep-link loop) and a list-candidates decisions date-window bug; real accept round-tripped to decisions-2026-08-28.jsonl on disk — see 11-07-SUMMARY.md
+- [Phase ?]: 11-08: Phase M2-05 closed — operator approved with backtest FAIL (thin-sample) and pre-screen retention miss (0.696 vs 0.85) accepted as documented gaps; 0.4 floor and VIX 15/25 boundaries kept as-is pending real live data
 
 ### 2026-05-31: Plan 10-06 — Scheduled Digest Delivery + Break-Glass (Replacing M2-03 Bare 4-Cap)
 
@@ -578,9 +580,10 @@ This was the explicit acceptance fixture for M2-04 and it passes. The data subst
 | Phase 11 P05 | 45min | 3 tasks | 5 files |
 | Phase 11 P06 | 55min | 3 tasks | 7 files |
 | Phase 11 P07 | ~2h10min | 3 tasks | 9 files |
+| Phase 11 P08 | ~1h40min | 3 tasks | 3 files |
 
 ## Session
 
-**Last session:** 2026-08-28T20:01:54.835Z
-**Stopped at:** Completed 11-07-PLAN.md
+**Last session:** 2026-08-28T20:28:40.333Z
+**Stopped at:** Completed 11-08-PLAN.md — Phase 11 (M2-05) execution complete, operator-approved
 **Resume file:** None

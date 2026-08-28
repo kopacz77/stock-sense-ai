@@ -264,7 +264,7 @@ M2-07: Live Execution + Tax Tracking
 ### Phase M2-05: AI-Augmented Strategy Engine
 
 **Directory**: `.planning/phases/11-ai-strategy/`
-**Status**: 📋 **PLANNED** (2026-08-27). Deferral window closed — `11-RESEARCH.md`, `11-PATTERNS.md`, `11-VALIDATION.md` and 8 plans committed. Run `/gsd-execute-phase 11`.
+**Status**: 🔄 **EXECUTION COMPLETE** (8/8 plans, 2026-08-28). Operator approved closing the phase at the 11-08 checkpoint with the live-window backtest FAIL (thin-sample, combined Sharpe -5.01) and the pre-screen retention shortfall (0.696 vs 0.85) recorded as documented gaps, not blockers; 0.4 score floor and VIX 15/25 boundaries kept as-is pending more live data. See `11-08-SUMMARY.md`. Pending `/gsd-verify-work` for formal phase closure.
 
 **Deferral history**: deferred 2026-06-02 → 2026-08-27 to accumulate live M2-04 data. On re-entry the substrate was: `polymarket-snapshots` + `news` continuous from 2026-05-23, `catalyst-flags` + `ticker-day-summary` continuous from 2026-05-31, `scored-articles` 36 non-contiguous days 2026-06-02 → 07-26 (LM Studio outage 07-27 → 08-27, backlog drained separately).
 
@@ -304,11 +304,13 @@ Plans:
 - [x] 11-05-PLAN.md — Engine integration: four-module registry, core/gated/shadow modes, cross-type ranking (top-5, 0.4 floor, next-3), full nine-subcommand CLI (Wave 3)
 - [x] 11-06-PLAN.md — Live-window backtest gate over the real 2026 substrate + `docs/M2-05_BACKTEST_GAP.md` (Wave 4)
 - [x] 11-07-PLAN.md — Minimal `/strategy` web route + three validated `/api/strategy/*` endpoints (Wave 4)
-- [ ] 11-08-PLAN.md — Iran-ceasefire worked example, phase acceptance run, validation sign-off (Wave 5)
+- [x] 11-08-PLAN.md — Iran-ceasefire worked example, phase acceptance run, validation sign-off (Wave 5)
 
 **Estimated effort**: 5-7 days
 
 **Future work (deferred, not scoped for v1)**: the CONTEXT-locked per-regime 2018-2025 backtest bar (Sharpe > 0.5 per regime, MaxDD < 25%, negative bull Sharpe = automatic fail, combined > best single type) is structurally unevaluable against this substrate — see `docs/M2-05_BACKTEST_GAP.md` for the full analysis. Two paths would unlock it: (A) a standalone Polymarket 2023-2025 re-mapping project (net-new curation, comparable in size to the original `PmMappingEngine` seeding), or (B) accumulating enough live 2026-onward trading history for calendar 2026 to itself be regime-classified and added to `regime-segmenter.ts`'s `REGIMES`. Neither is scheduled; this is a note for a future milestone, not a new phase.
+
+**Gap plan queued (11-09)**: the operator requested an after-tax/after-fees target hurdle during the 11-07 checkpoint, locked in `11-CONTEXT.md` (commits `9f57408`, `b5404ca`). To be planned as **11-09** immediately after this phase's verification (`/gsd-verify-work`), per the 11-08 checkpoint's follow-up list.
 
 ---
 
