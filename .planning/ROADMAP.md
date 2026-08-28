@@ -293,7 +293,7 @@ M2-07: Live Execution + Tax Tracking
 4. Operator can accept / skip each candidate; system tracks decision history
 5. Rationale displayed: technical setup + recent news summary + theme + vol regime + suggested size
 
-**Plans:** 8 plans in 5 waves
+**Plans:** 9 plans in 6 waves (11-09 is a post-verification gap plan)
 
 Plans:
 
@@ -305,12 +305,13 @@ Plans:
 - [x] 11-06-PLAN.md — Live-window backtest gate over the real 2026 substrate + `docs/M2-05_BACKTEST_GAP.md` (Wave 4)
 - [x] 11-07-PLAN.md — Minimal `/strategy` web route + three validated `/api/strategy/*` endpoints (Wave 4)
 - [x] 11-08-PLAN.md — Iran-ceasefire worked example, phase acceptance run, validation sign-off (Wave 5)
+- [ ] 11-09-PLAN.md — GAP: after-tax/after-fees net hurdle on targets — `config/tax-profiles.json` (ON-CA + CA-US), `src/strategy/costs.ts`, cost demotion, wash-sale/superficial-loss flag, gross-vs-after-cost backtest, `strategy costs --show` (Wave 6)
 
 **Estimated effort**: 5-7 days
 
 **Future work (deferred, not scoped for v1)**: the CONTEXT-locked per-regime 2018-2025 backtest bar (Sharpe > 0.5 per regime, MaxDD < 25%, negative bull Sharpe = automatic fail, combined > best single type) is structurally unevaluable against this substrate — see `docs/M2-05_BACKTEST_GAP.md` for the full analysis. Two paths would unlock it: (A) a standalone Polymarket 2023-2025 re-mapping project (net-new curation, comparable in size to the original `PmMappingEngine` seeding), or (B) accumulating enough live 2026-onward trading history for calendar 2026 to itself be regime-classified and added to `regime-segmenter.ts`'s `REGIMES`. Neither is scheduled; this is a note for a future milestone, not a new phase.
 
-**Gap plan queued (11-09)**: the operator requested an after-tax/after-fees target hurdle during the 11-07 checkpoint, locked in `11-CONTEXT.md` (commits `9f57408`, `b5404ca`). To be planned as **11-09** immediately after this phase's verification (`/gsd-verify-work`), per the 11-08 checkpoint's follow-up list.
+**Gap plan (11-09) — PLANNED 2026-08-28**: the operator requested an after-tax/after-fees target hurdle during the 11-07 checkpoint, locked in `11-CONTEXT.md` as D-23 + D-24 (commits `9f57408`, `b5404ca`). Planned as `11-09-PLAN.md` (Wave 6, `gap_closure: true`, depends on 11-05/11-06/11-07); run it with `/gsd-execute-phase 11 --gaps-only`. Scope: both jurisdictions' rule sets identified completely in `config/tax-profiles.json` (Ontario capital-gain at a dated inclusion rate; California short-term gains as ordinary income federal + state, NIIT toggle), a two-part hurdle (round-trip fee/slippage break-even on the target, and after-tax reward ÷ pre-tax risk ≥ `costs.minRewardRisk`), demotion-with-reason instead of silent re-targeting, a 30-day wash-sale / superficial-loss flag read off the decision log, and gross-vs-after-cost backtest reporting. `costs.marginalRatePct` ships as `null` — the engine never guesses a tax bracket, and with it unset the hurdle degrades to fees-only with a printed warning. Tax-lot tracking stays in M2-07.
 
 ---
 
