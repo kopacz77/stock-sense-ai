@@ -2,5 +2,9 @@
   "mode": "yolo",
   "parallelization": true,
   "createdAt": "2026-01-16",
-  "granularity": "standard"
+  "granularity": "standard",
+  "workflow": {
+    "_auto_chain_active": false,
+    "use_worktrees": false
+  }
 }

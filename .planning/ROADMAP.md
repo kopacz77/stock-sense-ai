@@ -64,6 +64,7 @@ M2-07: Live Execution + Tax Tracking
 **Why first**: every downstream phase assumes we have at least one technical baseline that's not garbage. If the existing strategies fail, we know to design fresh signals before building infrastructure around them. If they pass, we have a starting point to layer AI on top of.
 
 **Success Criteria**:
+
 1. Backtests run on at least 30 liquid US equities + 5 sector ETFs, daily bars 2018-01-01 → 2025-12-31
 2. Realistic costs applied: $0 commissions (Alpaca), 0.05% slippage per side, no leverage
 3. Reports show separate metrics for bull (2019, 2020-H2, 2023-2024), bear (2022, 2018-Q4), and high-vol (2020-Q1, 2025) regimes
@@ -71,6 +72,7 @@ M2-07: Live Execution + Tax Tracking
 5. Document recommends KEEP / MODIFY / DISCARD for each strategy
 
 **Suggested Build Order**:
+
 1. Build the test ticker universe + date range config
 2. Run momentum strategy across full universe with parameter sweep
 3. Run mean reversion strategy across full universe with parameter sweep
@@ -80,6 +82,7 @@ M2-07: Live Execution + Tax Tracking
 **Status:** ✅ COMPLETE (2026-05-31). Both `MomentumStrategy` and `MeanReversionStrategy` formally DISCARDED with evidence. See `.planning/phases/07-strategy-reality-check/RECOMMENDATION.md`. Bonus finding: `MomentumStrategy.shortMA` is not consumed by the indicator computation (config field is dead) — flagged for M2-05 design.
 
 **Plans:** 6 plans in 4 waves (all complete)
+
 - [x] 07-01-PLAN.md — Yahoo Finance date-range fallback wired into MarketDataService (Wave 1)
 - [x] 07-02-PLAN.md — Extract StrategyAdapter + createStrategyFactory into reusable module (Wave 1)
 - [x] 07-03-PLAN.md — Prefetch 35-ticker × 8-year universe into cache + quality report (Wave 2)
@@ -106,6 +109,7 @@ M2-07: Live Execution + Tax Tracking
 **Why now**: doing broker integration with paper money first reveals the real-world ugliness (rate limits, fill latency, rejection codes, websocket disconnects) without financial risk. Every assumption the current paper-trading engine makes will be tested.
 
 **Success Criteria**:
+
 1. `POST /api/paper/start` can target Alpaca paper account (toggle via config)
 2. All 5 order types submitted via Alpaca and confirmed by their API
 3. Order updates received via Alpaca streaming API and reconciled with local state
@@ -136,6 +140,7 @@ M2-07: Live Execution + Tax Tracking
 | ALERT-02 | LLM-assisted headline-to-market correlation produces alert rationale (≤200 words per alert) |
 
 **Provider candidates** (selection in phase plan):
+
 - Headlines (ticker): Finnhub `/company-news` (already integrated, free tier — cheapest path)
 - Headlines (macro/breaking): Polygon News ($29/mo basic) or NewsAPI (free dev tier as fallback)
 - Prediction markets: Polymarket Gamma API + CLOB API (free, no auth for reads); Kalshi deferred
@@ -145,6 +150,7 @@ M2-07: Live Execution + Tax Tracking
 - LLM: Claude API with aggressive prompt caching on static schema/theme content
 
 **Architecture sketch**:
+
 ```
 [News Sources] [Polymarket]   [Calendar] [VIX]
       │            │              │        │
@@ -165,12 +171,14 @@ M2-07: Live Execution + Tax Tracking
 ```
 
 **Alert signal types** (mapped to Telegram emoji):
+
 - 🔴 **HEADLINE_PM_CONFIRMED** — major headline + Polymarket relevant market moved ≥5pp same direction within 60 min
 - 🔵 **HEADLINE_PM_DIVERGENCE** — Polymarket moved ≥5pp but no major news found (smart-money-ahead signal)
 - 🟡 **HEADLINE_NO_PM_MOVE** — big-looking headline but markets flat (noise filter — low priority, optional)
 - 📋 **DAILY_DIGEST** — 7am ET "what to watch today" + 5pm ET "what happened today"
 
 **Success Criteria**:
+
 1. Polymarket Gamma API client returns active markets with prices/volume/end-date
 2. Headlines fetched and stored per-ticker for entire watchlist on cadence
 3. Economic calendar fetched and queryable for next 14 days
@@ -184,6 +192,7 @@ M2-07: Live Execution + Tax Tracking
 **Estimated effort**: 5-7 days
 
 **Suggested Build Order**:
+
 1. Polymarket read-only client + types
 2. Finnhub company-news poller + JSONL storage
 3. Telegram alert types extended (formatters only; not yet fired by correlator)
@@ -212,6 +221,7 @@ M2-07: Live Execution + Tax Tracking
 | AI-04 | LLM API spend tracked and capped daily (extends M2-03 cost tracking — reframed as call volume since LLM is local/free) |
 
 **Architecture additions on top of M2-03**:
+
 - Per-article scoring (sequential, sentence-level prompt with canonical-themes + upcoming-calendar context) → ScoredArticle[] (one record per article × ticker)
 - ScoreBacklog absorbs LLM-down windows (drain ≤50/cycle after fresh-article scoring)
 - 60-day calendar layer from FRED + Finnhub earnings + Treasury auctions + EIA Wednesdays cron + manual FDA PDUFA / OPEC seed files
@@ -224,6 +234,7 @@ M2-07: Live Execution + Tax Tracking
 **Why M2-04 matters more after M2-01**: with both `MomentumStrategy` and `MeanReversionStrategy` formally DISCARD'd (RECOMMENDATION.md, 2026-05-31), M2-05 will design **fresh** signals from M2-04 data — the rollup is M2-05's primary signal source, not a filter on top of working technicals. The data substrate has to be well-typed, well-tested, and easy to query.
 
 **Success Criteria**:
+
 1. Per-article scored sentiment + materiality persisted in `data/intel/scored-articles-YYYY-MM-DD.jsonl` (one record per article × ticker)
 2. Per-ticker-day rollup queryable via `data/intel/ticker-day-summary-YYYY-MM-DD.jsonl` + `intel rollup today --ticker T`
 3. LLM-discovered themes surface for operator review weekly via `intel themes review`; accepted themes persist to `config/themes.json`
@@ -237,6 +248,7 @@ M2-07: Live Execution + Tax Tracking
 **Status:** ✅ COMPLETE (2026-05-31). Goal verified 6/6 success criteria. Iran worked-example fixture passes end-to-end: scored article (sentiment=-0.7, materiality=0.85, XLE) + Iran ceasefire PM signal (-4pp, noPp inversion) + OPEC catalyst → XLE rollup with weightedSentiment≈-0.7, pmContribution.netScore=+4, activeCatalystIds=["opec-2026-06-01"]. **103/103 market-intelligence tests green.**
 
 **Plans:** 7 plans in 4 waves (all complete)
+
 - [x] 10-01-PLAN.md — Config seed files (themes, macro tickers, PM mappings, FDA/OPEC seeds) + signal/types.ts + Zod fred-key extension (Wave 1)
 - [x] 10-02-PLAN.md — ArticleScorer module + ScoreBacklog persistent queue (Wave 2)
 - [x] 10-03-PLAN.md — 5 calendar fetchers (FRED + Finnhub + Treasury + EIA + seed loader) + CalendarRefresher orchestrator (Wave 2)
@@ -266,6 +278,7 @@ M2-07: Live Execution + Tax Tracking
 | INCOME-01 (extended) | Combined strategy outperforms standalone technicals in backtest |
 
 **Design intent**:
+
 - Technical layer: identifies *candidates* (e.g., momentum breakout, oversold mean-reversion setup)
 - News layer: *filters* — kill the trade if recent sentiment is negative, kill it if a catalyst is within 24h
 - Theme layer: *prioritizes* — if the candidate is in an active theme (AI infra, defense, etc.), rank higher
@@ -273,6 +286,7 @@ M2-07: Live Execution + Tax Tracking
 - Output: ranked list of trade ideas with rationale, *not* an auto-fire
 
 **Success Criteria**:
+
 1. Combined strategy backtests show better risk-adjusted return (Sharpe, Calmar) than standalone technical in M2-01
 2. Backtest covers same 2018-2025 universe + regimes as M2-01
 3. Top-N daily candidates surfaced via CLI and web dashboard with full rationale
@@ -282,7 +296,8 @@ M2-07: Live Execution + Tax Tracking
 **Plans:** 8 plans in 5 waves
 
 Plans:
-- [ ] 11-01-PLAN.md — Article-intake materiality pre-screen: pure pre-LLM ranking replacing `isPriorityArticle`, ≥ 85% high-materiality retention at top-50% on a held-out week (Wave 1)
+
+- [x] 11-01-PLAN.md — Article-intake materiality pre-screen: pure pre-LLM ranking replacing `isPriorityArticle`, ≥ 85% high-materiality retention at top-50% on a held-out week (Wave 1)
 - [ ] 11-02-PLAN.md — TRACER: SECTOR_ROTATION_FROM_PM end-to-end (types, config, VIX provider, public ATR series, engine, decision log, `strategy` CLI) + generalized levels/sizing (Wave 1)
 - [ ] 11-03-PLAN.md — Shared catalyst-loader extraction + CATALYST_ANCHORED module across both scheduled-macro and LLM-emergent catalyst populations (Wave 2)
 - [ ] 11-04-PLAN.md — Scored-day coverage gate + SENTIMENT_VELOCITY (gated) + FADE_OVERSHOOT (shadow-only) (Wave 2)
@@ -310,6 +325,7 @@ Plans:
 | RISK-05 | Daily/weekly drawdown breaker auto-flattens and halts new orders |
 
 **Hard rules to enforce**:
+
 - Max single position: 25% of equity (later 15% as account grows)
 - Max sector / theme exposure: 50% of equity
 - Daily loss limit: 3% of equity → halt new entries until next session
@@ -319,6 +335,7 @@ Plans:
 - VIX regime stressed: max position size = 25% of normal
 
 **Success Criteria**:
+
 1. Every pre-trade goes through a hard check that returns ALLOW / BLOCK with reason
 2. BLOCK reasons logged and surfaced in dashboard
 3. Drawdown breaker tested: simulate -3% day → new orders rejected
@@ -342,6 +359,7 @@ Plans:
 | EXEC-04 | Tax-lot tracking records every fill with cost basis (FIFO) for after-tax PnL |
 
 **Success Criteria**:
+
 1. Live trading enabled via config + extra confirmation step
 2. First 30 days hard-capped at $250/position regardless of signal — to find execution bugs
 3. Every fill creates a tax lot with timestamp, cost basis, lot ID
