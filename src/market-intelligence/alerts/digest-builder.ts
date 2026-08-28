@@ -19,6 +19,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import { dedupeCatalystsById, loadAllCatalystFlags } from "../signal/catalyst-loader.js";
 import { ScoreBacklog } from "../signal/score-backlog.js";
 import { JsonlStore } from "../storage/jsonl-store.js";
 import type { NewsArticle } from "../news/types.js";
@@ -250,40 +251,14 @@ export class DigestBuilder {
     now: Date,
     hours: number,
   ): Promise<DigestPayload["upcomingCalendar"]> {
-    const files = await fs.readdir(this.dataDir).catch(() => [] as string[]);
-    const matching = files.filter((f) =>
-      /^catalyst-flags-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f),
-    );
-    const all: CatalystFlag[] = [];
-    for (const f of matching) {
-      const content = await fs
-        .readFile(path.join(this.dataDir, f), "utf8")
-        .catch(() => "");
-      for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (trimmed.length === 0) continue;
-        try {
-          all.push(JSON.parse(trimmed) as CatalystFlag);
-        } catch {
-          /* skip malformed */
-        }
-      }
-    }
-
-    // Dedup by id — latest by lastRefinedAt ?? firstSeenAt wins.
-    const byId = new Map<string, CatalystFlag>();
-    for (const c of all) {
-      const existing = byId.get(c.id);
-      const cTs = Date.parse(c.lastRefinedAt ?? c.firstSeenAt);
-      const eTs = existing
-        ? Date.parse(existing.lastRefinedAt ?? existing.firstSeenAt)
-        : -Infinity;
-      if (!existing || cTs > eTs) byId.set(c.id, c);
-    }
+    // Shared loader owns the scan + dedup; this method keeps its own
+    // hours-granular window filter (the shared loader's day-granular
+    // `loadUpcomingCatalysts` is too coarse for the digest's 24h window).
+    const deduped = dedupeCatalystsById(await loadAllCatalystFlags(this.dataDir));
 
     const cutoffMs = now.getTime() + hours * 60 * 60 * 1000;
     const nowMs = now.getTime();
-    return Array.from(byId.values())
+    return deduped
       .filter((c) => c.archived !== true)
       .filter((c) => {
         const expected = Date.parse(c.expectedDate);

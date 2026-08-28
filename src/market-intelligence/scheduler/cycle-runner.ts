@@ -20,6 +20,11 @@ import type { MarketSnapshot } from "../polymarket/types.js";
 
 // M2-04 signal layer wiring
 import { ArticleScorer, type ScoringContext } from "../signal/article-scorer.js";
+import {
+  dedupeCatalystsById,
+  loadAllCatalystFlags,
+  loadUpcomingCatalysts,
+} from "../signal/catalyst-loader.js";
 import { ScoreBacklog } from "../signal/score-backlog.js";
 import { isDrainLocked, persistDrainedRecords } from "../signal/backlog-drain.js";
 import { rebuildRollupForDay } from "../signal/rollup-backfill.js";
@@ -675,71 +680,18 @@ async function loadCanonicalThemes(themesPath: string): Promise<string[]> {
 }
 
 /**
- * Read all catalyst-flags-*.jsonl files in dataDir, dedup by id (taking the
- * latest by lastRefinedAt ?? firstSeenAt), filter to expectedDate within the
- * next `days` days AND not archived.
+ * Non-archived catalyst flags with expectedDate within the next `days` days.
+ * Delegates to the shared `catalyst-loader.ts` scan/dedup/filter.
  *
  * This is the ScoringContext.upcomingEvents source — gives the scorer a stable
  * "what's coming up" anchor so referencedCalendarEvents can be populated.
  */
 async function loadUpcomingEvents(dataDir: string, days: number): Promise<CalendarEvent[]> {
-  const files = await fs.readdir(dataDir).catch(() => [] as string[]);
-  const matching = files.filter((f) => /^catalyst-flags-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f));
-  const all: CalendarEvent[] = [];
-  for (const f of matching) {
-    const content = await fs.readFile(path.join(dataDir, f), "utf8").catch(() => "");
-    for (const line of content.split("\n")) {
-      const t = line.trim();
-      if (t.length === 0) continue;
-      try {
-        all.push(JSON.parse(t) as CalendarEvent);
-      } catch {
-        /* skip malformed */
-      }
-    }
-  }
-  const byId = new Map<string, CalendarEvent>();
-  for (const c of all) {
-    const existing = byId.get(c.id);
-    const cTs = Date.parse(c.lastRefinedAt ?? c.firstSeenAt);
-    const eTs = existing ? Date.parse(existing.lastRefinedAt ?? existing.firstSeenAt) : -Infinity;
-    if (!existing || cTs > eTs) byId.set(c.id, c);
-  }
-  const now = new Date();
-  const todayIso = now.toISOString().split("T")[0]!;
-  const horizon = new Date(now.getTime() + days * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split("T")[0]!;
-  return Array.from(byId.values()).filter((c) => {
-    if (c.archived === true) return false;
-    const day = c.expectedDate.split("T")[0] ?? "";
-    return day >= todayIso && day <= horizon;
-  });
+  const todayIso = new Date().toISOString().split("T")[0]!;
+  return loadUpcomingCatalysts(dataDir, todayIso, days);
 }
 
 /** Same scan as loadUpcomingEvents but returns ALL catalyst flags (no horizon filter). */
 async function loadAllCatalysts(dataDir: string): Promise<CatalystFlag[]> {
-  const files = await fs.readdir(dataDir).catch(() => [] as string[]);
-  const matching = files.filter((f) => /^catalyst-flags-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f));
-  const all: CatalystFlag[] = [];
-  for (const f of matching) {
-    const content = await fs.readFile(path.join(dataDir, f), "utf8").catch(() => "");
-    for (const line of content.split("\n")) {
-      const t = line.trim();
-      if (t.length === 0) continue;
-      try {
-        all.push(JSON.parse(t) as CatalystFlag);
-      } catch {
-        /* skip malformed */
-      }
-    }
-  }
-  const byId = new Map<string, CatalystFlag>();
-  for (const c of all) {
-    const existing = byId.get(c.id);
-    const cTs = Date.parse(c.lastRefinedAt ?? c.firstSeenAt);
-    const eTs = existing ? Date.parse(existing.lastRefinedAt ?? existing.firstSeenAt) : -Infinity;
-    if (!existing || cTs > eTs) byId.set(c.id, c);
-  }
-  return Array.from(byId.values());
+  return dedupeCatalystsById(await loadAllCatalystFlags(dataDir));
 }

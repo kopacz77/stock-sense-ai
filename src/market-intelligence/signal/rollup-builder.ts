@@ -38,6 +38,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { loadActiveCatalysts as loadActiveCatalystsShared } from "./catalyst-loader.js";
 import { JsonlStore } from "../storage/jsonl-store.js";
 import type {
   CatalystFlag,
@@ -156,38 +157,12 @@ export class RollupBuilder {
   }
 
   /**
-   * Scan `data/intel/catalyst-flags-*.jsonl`, parse all rows, dedup by id taking
-   * the latest (`lastRefinedAt ?? firstSeenAt`), then filter to
-   * non-archived events whose expectedDate >= dayIso.
+   * Thin wrapper over the shared `catalyst-loader.ts` scan/dedup/filter —
+   * kept so no external caller needs to change. See `loadActiveCatalysts`
+   * in `./catalyst-loader.js` for the implementation.
    */
   private async loadActiveCatalysts(dayIso: string): Promise<CatalystFlag[]> {
-    const files = await fs.readdir(this.dataDir).catch(() => [] as string[]);
-    const matching = files.filter((f) => /^catalyst-flags-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f));
-    const all: CatalystFlag[] = [];
-    for (const f of matching) {
-      const content = await fs.readFile(path.join(this.dataDir, f), "utf8").catch(() => "");
-      for (const line of content.split("\n")) {
-        const t = line.trim();
-        if (t.length === 0) continue;
-        try {
-          all.push(JSON.parse(t) as CatalystFlag);
-        } catch {
-          /* skip malformed */
-        }
-      }
-    }
-    // Dedup by id; keep latest by lastRefinedAt ?? firstSeenAt.
-    const byId = new Map<string, CatalystFlag>();
-    for (const c of all) {
-      const existing = byId.get(c.id);
-      const cTs = Date.parse(c.lastRefinedAt ?? c.firstSeenAt);
-      const eTs = existing ? Date.parse(existing.lastRefinedAt ?? existing.firstSeenAt) : -Infinity;
-      if (!existing || cTs > eTs) byId.set(c.id, c);
-    }
-    // Filter to non-archived + expectedDate >= dayIso.
-    return Array.from(byId.values()).filter(
-      (c) => c.archived !== true && (c.expectedDate.split("T")[0] ?? "") >= dayIso,
-    );
+    return loadActiveCatalystsShared(this.dataDir, dayIso);
   }
 
   /** Overwrite the day's summary file with atomic temp-rename (idempotent rebuild). */

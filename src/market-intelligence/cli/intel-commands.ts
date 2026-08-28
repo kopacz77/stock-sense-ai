@@ -18,6 +18,7 @@ import {
 } from "../polymarket/relevance-filter.js";
 import { ArticleScorer, type ScoringContext } from "../signal/article-scorer.js";
 import { CalendarRefresher } from "../signal/calendar/index.js";
+import { loadUpcomingCatalysts } from "../signal/catalyst-loader.js";
 import { runStabilityTest } from "../signal/stability-test.js";
 import { backfillMissingRollups } from "../signal/rollup-backfill.js";
 import { drainBacklog, releaseDrainLock } from "../signal/backlog-drain.js";
@@ -141,49 +142,15 @@ async function loadMacroTickers(configDir = CONFIG_DIR): Promise<string[]> {
 }
 
 /**
- * Scan catalyst-flags-*.jsonl across all days, dedup by id (taking latest
- * lastRefinedAt/firstSeenAt), filter to non-archived with expectedDate
- * between (today - 1d) and (today + days).
- *
- * Same dedup/filter logic as RollupBuilder.loadActiveCatalysts; replicated
- * here to avoid coupling the CLI to RollupBuilder's private API.
+ * Non-archived catalyst flags with expectedDate in `[today, today + days]`.
+ * Delegates to the shared `catalyst-loader.ts` scan/dedup/filter.
  */
 async function loadAllUpcomingCalendarEvents(
   days: number,
   dataDir = DATA_DIR,
 ): Promise<CalendarEvent[]> {
-  const files = await fs.readdir(dataDir).catch(() => [] as string[]);
-  const matching = files.filter((f) => /^catalyst-flags-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f));
-  const all: CalendarEvent[] = [];
-  for (const f of matching) {
-    const content = await fs.readFile(path.join(dataDir, f), "utf8").catch(() => "");
-    for (const line of content.split("\n")) {
-      const t = line.trim();
-      if (!t) continue;
-      try {
-        all.push(JSON.parse(t) as CalendarEvent);
-      } catch {
-        // skip malformed
-      }
-    }
-  }
-  const byId = new Map<string, CalendarEvent>();
-  for (const e of all) {
-    const existing = byId.get(e.id);
-    const cTs = Date.parse(e.lastRefinedAt ?? e.firstSeenAt);
-    const eTs = existing ? Date.parse(existing.lastRefinedAt ?? existing.firstSeenAt) : -Infinity;
-    if (!existing || cTs > eTs) byId.set(e.id, e);
-  }
-  const today = new Date();
-  const todayIso = today.toISOString().split("T")[0]!;
-  const cutoffEnd = new Date(today.getTime() + days * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split("T")[0]!;
-  return Array.from(byId.values()).filter((c) => {
-    if (c.archived) return false;
-    const ed = c.expectedDate.split("T")[0] ?? "";
-    return ed >= todayIso && ed <= cutoffEnd;
-  });
+  const todayIso = new Date().toISOString().split("T")[0]!;
+  return loadUpcomingCatalysts(dataDir, todayIso, days);
 }
 
 /**
