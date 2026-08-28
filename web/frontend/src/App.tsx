@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
@@ -29,17 +29,30 @@ function TabRouteSync() {
   const location = useLocation();
   const { activeTab, setActiveTab } = useUIStore();
 
+  // When a tab change originates from the URL (deep link, back/forward), the
+  // navigate-on-tab-change effect below must NOT fire. Without this flag the
+  // two effects ping-pong on a direct load of any non-default route: effect 1
+  // schedules setActiveTab(path) while effect 2 — in the same commit — still
+  // sees the stale activeTab and navigates back to it (11-07 checkpoint bug:
+  // /strategy <-> /monitoring, hundreds of navigations/sec, API 429s).
+  const tabChangeFromUrl = useRef(false);
+
   // Sync activeTab from URL on mount and URL changes
   useEffect(() => {
     const pathSegment = location.pathname.split('/')[1] || 'monitoring';
     const validTabs = ['monitoring', 'discovery', 'analysis', 'market', 'strategy', 'settings', 'help'];
     if (validTabs.includes(pathSegment) && pathSegment !== activeTab) {
+      tabChangeFromUrl.current = true;
       setActiveTab(pathSegment as typeof activeTab);
     }
   }, [location.pathname, setActiveTab]); // Removed activeTab to prevent loop
 
-  // Navigate when activeTab changes (from keyboard shortcuts, etc.)
+  // Navigate when activeTab changes (from keyboard shortcuts, tab clicks, etc.)
   useEffect(() => {
+    if (tabChangeFromUrl.current) {
+      tabChangeFromUrl.current = false;
+      return;
+    }
     const pathSegment = location.pathname.split('/')[1] || 'monitoring';
     // Only navigate if activeTab differs from current path segment
     if (pathSegment !== activeTab && activeTab) {
