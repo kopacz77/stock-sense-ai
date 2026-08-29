@@ -35,9 +35,10 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import ora from "ora";
 
+import type { PerformanceMetrics } from "../../backtesting/types/backtest-types.js";
 import { loadActiveCatalysts } from "../../market-intelligence/signal/catalyst-loader.js";
 import { JsonlStore } from "../../market-intelligence/storage/jsonl-store.js";
-import type { LiveWindowReport, TypeReport } from "../backtest/live-window-runner.js";
+import type { CostImpact, LiveWindowReport, TypeReport } from "../backtest/live-window-runner.js";
 import {
   LIVE_WINDOW_LABEL,
   THIN_SAMPLE_TRADE_THRESHOLD,
@@ -95,6 +96,8 @@ export interface StrategyCommandsDeps {
   strategyDataDir?: string;
   vixProvider?: VixSource;
   marketData?: MarketDataSource;
+  /** Plan 11-09: overrides `loadStrategyConfig`'s default path — mainly for tests. */
+  configPath?: string;
 }
 
 /** Shared `--date` parsing/validation for `run`, `list-candidates`, `show-vix`, `show-substrate`. */
@@ -212,6 +215,7 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
               modules,
               vixProvider: deps.vixProvider,
               marketData: deps.marketData,
+              configPath: deps.configPath,
             }).generateCandidates(asOfDate);
 
         const rankedCapped =
@@ -228,7 +232,7 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
         // regime's reference (typeModifier=1) size as the representative
         // break-even — each candidate's own line above prints its own
         // size-specific net R:R.
-        const costsConfig = await loadStrategyConfig();
+        const costsConfig = await loadStrategyConfig(deps.configPath);
         const taxProfilesFile = await loadTaxProfiles(costsConfig.costs.taxProfilesPath);
         const activeProfile = resolveActiveProfile(taxProfilesFile, costsConfig.costs);
         const referenceSizeUsd = suggestSizeUsd(
@@ -400,7 +404,7 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
         }
 
         if (overrides.size !== undefined) {
-          const config = await loadStrategyConfig();
+          const config = await loadStrategyConfig(deps.configPath);
           const maxRegimeSize = suggestSizeUsd(
             "calm",
             candidate.signalType,
@@ -676,7 +680,7 @@ export function registerStrategyCommands(program: Command, deps: StrategyCommand
         }
       }
 
-      const config = await loadStrategyConfig();
+      const config = await loadStrategyConfig(deps.configPath);
       const taxProfilesFile = await loadTaxProfiles(config.costs.taxProfilesPath);
       const activeProfile = resolveActiveProfile(taxProfilesFile, config.costs);
 
@@ -765,24 +769,62 @@ function formatVerdictLine(label: string, pass: boolean, detail: string): string
 }
 
 /** `PerformanceMetrics.maxDrawdown` is a negative percentage (e.g. -12.3 = -12.3%) and `winRate` a 0-100 percentage. */
+/** Plan 11-09: one metrics line, prefixed `gross` or `after-cost`, existing column widths. */
+function formatMetricsLine(prefix: "gross" | "after-cost", metrics: PerformanceMetrics, thinTag: string): string {
+  const sharpe = metrics.sharpeRatio.toFixed(2).padStart(6);
+  const sortino = metrics.sortinoRatio.toFixed(2).padStart(6);
+  const maxDd = `${metrics.maxDrawdown.toFixed(1)}%`.padStart(8);
+  const winRate = `${metrics.winRate.toFixed(1)}%`.padStart(7);
+  return (
+    `  ${prefix.padEnd(11)} sharpe=${sharpe} sortino=${sortino} maxDD=${maxDd} win=${winRate}${thinTag}`
+  );
+}
+
+/**
+ * Plan 11-09: a header line (type name, usable range, candidate/trade
+ * counts) followed by two metrics lines — `gross` (zero commissions,
+ * slippage, tax) and `after-cost` (Task 1's own module doc comment: now
+ * ALSO includes tax with the disallowed-loss rule applied, a stricter gate
+ * than pre-11-09's after-cost-but-pre-tax numbers — the tightening is the
+ * operator's stated intent, not a regression).
+ */
 function formatTypeRow(report: TypeReport): string {
   const isShadow = report.signalType === "FADE_OVERSHOOT";
-  const thinTag = report.thinSample ? chalk.yellow(" thin-sample") : "";
   const name = String(report.signalType).padEnd(24);
   const range = report.usableRange.padEnd(26);
   const candidates = String(report.candidateCount).padStart(5);
   const trades = String(report.tradeCount).padStart(6);
+  const header = `${name} ${range} cand=${candidates} trades=${trades}`;
   if (isShadow) {
-    return `${name} ${range} cand=${candidates} trades=${trades}  —  —  —  —  (shadow-only, never sized)`;
+    return `${header}  —  —  —  —  (shadow-only, never sized)`;
   }
-  const sharpe = report.metrics.sharpeRatio.toFixed(2).padStart(6);
-  const sortino = report.metrics.sortinoRatio.toFixed(2).padStart(6);
-  const maxDd = `${report.metrics.maxDrawdown.toFixed(1)}%`.padStart(8);
-  const winRate = `${report.metrics.winRate.toFixed(1)}%`.padStart(7);
-  return (
-    `${name} ${range} cand=${candidates} trades=${trades} sharpe=${sharpe} ` +
-    `sortino=${sortino} maxDD=${maxDd} win=${winRate}${thinTag}`
+  const thinTag = report.thinSample ? chalk.yellow(" thin-sample") : "";
+  return [
+    header,
+    formatMetricsLine("gross", report.grossMetrics, thinTag),
+    formatMetricsLine("after-cost", report.metrics, thinTag),
+  ].join("\n");
+}
+
+/** Plan 11-09: total commissions/slippage/tax/disallowed-loss for the combined result. */
+function printCostImpact(costImpact: CostImpact): void {
+  console.log(chalk.bold("\nCost impact:"));
+  console.log(`  Total commissions: $${costImpact.totalCommissions.toFixed(2)}`);
+  console.log(`  Total slippage: $${costImpact.totalSlippage.toFixed(2)}`);
+  console.log(`  Total tax: $${costImpact.totalTaxUsd.toFixed(2)}`);
+  console.log(`  Disallowed loss: $${costImpact.disallowedLossUsd.toFixed(2)}`);
+  console.log(
+    costImpact.taxRateKnown
+      ? `  Effective tax rate: ${costImpact.effectiveTaxRatePct.toFixed(1)}%`
+      : "  Effective tax rate: pre-tax (marginalRatePct unset)",
   );
+  if (!costImpact.taxRateKnown) {
+    console.log(
+      chalk.yellow(
+        "  WARNING: costs.marginalRatePct is unset — hurdle degraded to fees-only (no tax haircut applied, reward:risk reported pre-tax)",
+      ),
+    );
+  }
 }
 
 function printBacktestReport(report: LiveWindowReport, typesToRun: readonly SignalType[]): void {
@@ -803,9 +845,13 @@ function printBacktestReport(report: LiveWindowReport, typesToRun: readonly Sign
   console.log(chalk.bold("\nCombined:"));
   console.log(formatTypeRow(report.combined));
 
+  printCostImpact(report.combined.costImpact);
+
   const sharpePass = report.combined.metrics.sharpeRatio > 0;
   const maxDdPass = Math.abs(report.combined.metrics.maxDrawdown) < 25;
-  console.log(chalk.bold("\nVerdict (D-15 thresholds — interim, not the per-regime bar):"));
+  console.log(
+    chalk.bold("\nVerdict (D-15 thresholds — interim, not the per-regime bar) (after-cost, incl. tax):"),
+  );
   console.log(
     formatVerdictLine(
       "Combined Sharpe > 0:",
@@ -861,6 +907,7 @@ async function runDryRun(
       modules,
       vixProvider: deps.vixProvider,
       marketData: deps.marketData,
+      configPath: deps.configPath,
     });
     return await engine.generateCandidates(asOfDate);
   } finally {

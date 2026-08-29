@@ -58,6 +58,8 @@ import { MarketDataService } from "../../data/market-data-service.js";
 import type { OHLCVData } from "../../data/types.js";
 import { DRAIN_LOCK_FILE, isDrainLocked } from "../../market-intelligence/signal/backlog-drain.js";
 import { loadStrategyConfig } from "../config.js";
+import type { StrategyConfig } from "../config.js";
+import { computeNetHurdle, loadTaxProfiles, resolveActiveProfile } from "../costs.js";
 import { round2 } from "../levels.js";
 import { defaultSignalModules } from "../signals/index.js";
 import type { MarketDataSource, VixSource } from "../strategy-engine.js";
@@ -121,6 +123,16 @@ export interface LiveWindowOptions {
   marketData?: MarketDataSource;
   vixProvider?: VixSource;
   /**
+   * Injected config (Plan 11-09), passed straight through to every
+   * internally-constructed `StrategyEngine` (which then skips its own
+   * `loadStrategyConfig` disk read — same precedent as `modules`/
+   * `marketData`/`vixProvider` above). Omit in production to read the real
+   * `config/strategy-config.json`. Also sources `initialCapital`/
+   * `maxSimultaneousPositions`/`costs`/the tax-profiles path for this run
+   * when supplied.
+   */
+  config?: StrategyConfig;
+  /**
    * Called once per (pass, day) so a caller (the CLI's `ora` spinner) can
    * report progress across what's typically a multi-minute replay — up to
    * `requestedTypes.length` isolated passes plus one combined pass, each
@@ -133,11 +145,32 @@ export interface LiveWindowOptions {
   }) => void;
 }
 
+/** Plan 11-09 (D-24): commissions/slippage/tax/disallowed-loss over one pass. */
+export interface CostImpact {
+  totalCommissions: number;
+  totalSlippage: number;
+  totalTaxUsd: number;
+  disallowedLossUsd: number;
+  effectiveTaxRatePct: number;
+  taxRateKnown: boolean;
+}
+
 export interface TypeReport {
   signalType: SignalType | "COMBINED";
   candidateCount: number;
   tradeCount: number;
+  /**
+   * AFTER-COST — meaning includes commissions, slippage, AND (Plan 11-09)
+   * tax with the disallowed-loss rule applied. This is a STRICTER gate than
+   * pre-11-09's after-cost-but-pre-tax metrics; the tightening is the
+   * operator's stated intent (D-24), not a regression. `grossMetrics` below
+   * is the zero-cost, zero-tax comparison point.
+   */
   metrics: PerformanceMetrics;
+  /** Zero commissions, zero slippage, zero tax — the pre-cost comparison point (Plan 11-09). */
+  grossMetrics: PerformanceMetrics;
+  /** Plan 11-09: the commissions/slippage/tax/disallowed-loss that separate `grossMetrics` from `metrics`. */
+  costImpact: CostImpact;
   thinSample: boolean;
   usableRange: string;
 }
@@ -156,6 +189,9 @@ export interface SimulationCosts {
   slippagePctPerSide: number;
   commissionPerTrade: number;
 }
+
+/** Zero-cost simulation costs — used to compute the gross (pre-fee, pre-slippage) comparison path (Plan 11-09). */
+export const ZERO_COSTS: SimulationCosts = { slippagePctPerSide: 0, commissionPerTrade: 0 };
 
 /**
  * Resolve one candidate into a `Trade` by walking `bars` forward from the
@@ -327,12 +363,15 @@ function markToMarket(
 }
 
 interface OpenPosition {
-  trade: Trade;
+  trade: Trade; // after-cost (fees + slippage; tax applied at close time)
+  grossTrade: Trade; // zero-cost comparison twin — identical entry/exit dates and quantity by construction
   ticker: string;
   direction: "long" | "short";
   quantity: number;
   entryFill: number;
+  grossEntryFill: number;
   costBasis: number;
+  grossCostBasis: number;
   entryDateIso: string;
   exitDateIso: string;
 }
@@ -340,10 +379,14 @@ interface OpenPosition {
 interface PassResult {
   candidateCount: number;
   shadowCount: number;
-  trades: Trade[];
+  trades: Trade[]; // after-cost, tax-adjusted
+  grossTrades: Trade[]; // zero-cost, zero-tax
   equityCurve: EquityCurvePoint[];
+  grossEquityCurve: EquityCurvePoint[];
   totalCommissions: number;
   totalSlippage: number;
+  totalTaxUsd: number;
+  disallowedLossUsd: number;
   firstCandidateDateIso: string | null;
   lastCandidateDateIso: string | null;
 }
@@ -360,6 +403,11 @@ interface RunPassArgs {
   initialCapital: number;
   maxSimultaneousPositions: number;
   costs: SimulationCosts;
+  /** Plan 11-09: the active profile's effective tax rate (0 when unknown) and its loss-rule window. */
+  effectiveTaxRate: number;
+  lossRuleWindowDays: number;
+  /** Passed straight through to every internally-constructed `StrategyEngine` — see `LiveWindowOptions.config`. */
+  config?: StrategyConfig;
   onProgress?: LiveWindowOptions["onProgress"];
 }
 
@@ -371,20 +419,43 @@ interface RunPassArgs {
  * `maxSimultaneousPositions` across the whole pass (extra same-day
  * candidates are counted into `candidateCount` but never traded).
  */
+function applyTaxToTrade(trade: Trade, taxUsd: number): Trade {
+  const adjustedPnl = round2(trade.pnl - taxUsd);
+  return { ...trade, pnl: adjustedPnl, netPnL: adjustedPnl, netPnl: adjustedPnl };
+}
+
 async function runPass(args: RunPassArgs): Promise<PassResult> {
-  const { initialCapital, maxSimultaneousPositions, costs } = args;
+  const { initialCapital, maxSimultaneousPositions, costs, effectiveTaxRate, lossRuleWindowDays } =
+    args;
 
   let cash = initialCapital;
+  let grossCash = initialCapital;
   let prevEquity = initialCapital;
+  let prevGrossEquity = initialCapital;
   const openPositions: OpenPosition[] = [];
   const trades: Trade[] = [];
+  const grossTrades: Trade[] = [];
   const equityCurve: EquityCurvePoint[] = [];
+  const grossEquityCurve: EquityCurvePoint[] = [];
   let candidateCount = 0;
   let shadowCount = 0;
   let totalCommissions = 0;
   let totalSlippage = 0;
+  let totalTaxUsd = 0;
+  let disallowedLossUsd = 0;
   let firstCandidateDateIso: string | null = null;
   let lastCandidateDateIso: string | null = null;
+
+  // Plan 11-09 (D-24): a forward-only, single-pass expression of the
+  // disallowed-loss rule (US wash-sale / Canadian superficial-loss). A loss
+  // closed on this ticker sits here until either (a) a gain later offsets
+  // it (removed from the bucket by the gain, per the tax step below), or
+  // (b) a re-entry on the SAME ticker happens inside `lossRuleWindowDays`
+  // (removed from the bucket AND counted into `disallowedLossUsd`, per the
+  // open step below) — whichever happens first, deleting the entry so a
+  // third re-entry can never double-disallow the same loss.
+  const lastLossCloseByTicker = new Map<string, { closedAtIso: string; absLossUsd: number }>();
+  let lossOffsetBucketUsd = 0;
 
   for (let dayIndex = 0; dayIndex < args.dayIsos.length; dayIndex++) {
     const dateIso = args.dayIsos[dayIndex] ?? "";
@@ -397,13 +468,37 @@ async function runPass(args: RunPassArgs): Promise<PassResult> {
 
     // 1. Realize any positions whose resolved exit date is today (or, for a
     //    weekend/holiday date the engine never runs on, has already passed).
+    //    Tax applies HERE, on the after-cost close, walking closes in
+    //    chronological day order (a loss followed on a later day by a gain
+    //    correctly offsets it; the reverse never does).
     for (let i = openPositions.length - 1; i >= 0; i--) {
       const pos = openPositions[i];
       if (pos && pos.exitDateIso <= dateIso) {
-        cash += pos.costBasis + pos.trade.pnl;
+        const originalPnl = pos.trade.pnl;
+        let afterCostTrade = pos.trade;
+
+        if (originalPnl >= 0) {
+          const taxable = Math.max(0, originalPnl - lossOffsetBucketUsd);
+          const tax = round2(taxable * effectiveTaxRate);
+          if (tax > 0) {
+            afterCostTrade = applyTaxToTrade(pos.trade, tax);
+            totalTaxUsd += tax;
+          }
+          lossOffsetBucketUsd = Math.max(0, lossOffsetBucketUsd - originalPnl);
+        } else {
+          lossOffsetBucketUsd += Math.abs(originalPnl);
+          lastLossCloseByTicker.set(pos.ticker, {
+            closedAtIso: dateIso,
+            absLossUsd: Math.abs(originalPnl),
+          });
+        }
+
+        cash += pos.costBasis + afterCostTrade.pnl;
+        grossCash += pos.grossCostBasis + pos.grossTrade.pnl;
         totalCommissions += pos.trade.commission;
         totalSlippage += pos.trade.slippage;
-        trades.push(pos.trade);
+        trades.push(afterCostTrade);
+        grossTrades.push(pos.grossTrade);
         openPositions.splice(i, 1);
       }
     }
@@ -412,12 +507,16 @@ async function runPass(args: RunPassArgs): Promise<PassResult> {
     //    path (`StrategyEngine.generateCandidates`), scoped to this pass's
     //    module set. Every internally-constructed engine writes to a
     //    scratch strategyDataDir — never the real data/strategy/ stream.
+    //    Exactly ONE engine replay per pass, per day — the gross path below
+    //    is pure arithmetic over bars already in `args.getBars`'s cache,
+    //    never a second `generateCandidates` call.
     const engine = new StrategyEngine({
       intelDataDir: args.intelDataDir,
       strategyDataDir: args.scratchStrategyDataDir,
       modules: args.modules,
       vixProvider: args.vixProvider,
       marketData: args.marketData,
+      config: args.config,
     });
     const result = await engine.generateCandidates(dayDate);
 
@@ -429,35 +528,69 @@ async function runPass(args: RunPassArgs): Promise<PassResult> {
     }
 
     // 3. Open new positions from today's ranked (sized) candidates, best
-    //    score first, up to whatever concurrency headroom remains.
+    //    score first, up to whatever concurrency headroom remains. Position
+    //    ADMISSION reads the after-cost curve (the real account) — the
+    //    gross twin is computed purely for comparison, never for sizing or
+    //    concurrency decisions.
     let openCount = openPositions.length;
     for (const candidate of result.ranked) {
       if (openCount >= maxSimultaneousPositions) break; // counted (candidateCount above), not traded
       const bars = await args.getBars(candidate.ticker);
-      const trade = simulateCandidate(candidate, bars, costs);
-      if (!trade) continue; // e.g. < 1 share — not a concurrency skip
+      const afterCostTrade = simulateCandidate(candidate, bars, costs);
+      if (!afterCostTrade) continue; // e.g. < 1 share — not a concurrency skip
+      // Same candidate/bars, zero costs — quantity and the exit trigger are
+      // cost-independent, so this is structurally non-null whenever
+      // afterCostTrade is; the check stays defensive rather than asserted.
+      const grossTrade = simulateCandidate(candidate, bars, ZERO_COSTS);
+      if (!grossTrade) continue;
+
+      // Disallowed-loss check — a REAL open (not merely a candidate that
+      // was considered and skipped for concurrency) on a ticker with a
+      // recent loss closure inside the window disallows that prior loss.
+      const priorLoss = lastLossCloseByTicker.get(candidate.ticker);
+      if (priorLoss) {
+        const daysSince = Math.round(
+          (Date.parse(`${dateIso}T00:00:00.000Z`) -
+            Date.parse(`${priorLoss.closedAtIso}T00:00:00.000Z`)) /
+            DAY_MS,
+        );
+        if (daysSince <= lossRuleWindowDays) {
+          lossOffsetBucketUsd = Math.max(0, lossOffsetBucketUsd - priorLoss.absLossUsd);
+          disallowedLossUsd += priorLoss.absLossUsd;
+          lastLossCloseByTicker.delete(candidate.ticker);
+        }
+      }
+
       const exitDateIso =
-        (trade.exitDate ?? trade.exitTime)?.toISOString().split("T")[0] ?? dateIso;
-      cash -= trade.entryPrice * trade.quantity;
+        (afterCostTrade.exitDate ?? afterCostTrade.exitTime)?.toISOString().split("T")[0] ??
+        dateIso;
+      cash -= afterCostTrade.entryPrice * afterCostTrade.quantity;
+      grossCash -= grossTrade.entryPrice * grossTrade.quantity;
       openPositions.push({
-        trade,
+        trade: afterCostTrade,
+        grossTrade,
         ticker: candidate.ticker,
         direction: candidate.direction,
-        quantity: trade.quantity,
-        entryFill: trade.entryPrice,
-        costBasis: trade.entryPrice * trade.quantity,
+        quantity: afterCostTrade.quantity,
+        entryFill: afterCostTrade.entryPrice,
+        grossEntryFill: grossTrade.entryPrice,
+        costBasis: afterCostTrade.entryPrice * afterCostTrade.quantity,
+        grossCostBasis: grossTrade.entryPrice * grossTrade.quantity,
         entryDateIso: dateIso,
         exitDateIso,
       });
       openCount++;
     }
 
-    // 4. Mark-to-market every still-open position for today's equity point.
+    // 4. Mark-to-market every still-open position for today's equity point
+    //    — both curves, same close price, different entry fills.
     let openValue = 0;
+    let grossOpenValue = 0;
     for (const pos of openPositions) {
       const bars = await args.getBars(pos.ticker);
       const close = closeOnOrBefore(bars, dateIso) ?? pos.entryFill;
       openValue += markToMarket(pos.direction, pos.quantity, pos.entryFill, close);
+      grossOpenValue += markToMarket(pos.direction, pos.quantity, pos.grossEntryFill, close);
     }
 
     const equity = cash + openValue;
@@ -476,15 +609,37 @@ async function runPass(args: RunPassArgs): Promise<PassResult> {
       drawdown: 0, // PerformanceMetricsCalculator.calculateDrawdowns recomputes this from the curve
     });
     prevEquity = equity;
+
+    const grossEquity = grossCash + grossOpenValue;
+    const grossReturns =
+      prevGrossEquity > 0 ? (grossEquity - prevGrossEquity) / prevGrossEquity : 0;
+    grossEquityCurve.push({
+      timestamp: dayDate,
+      date: dayDate,
+      equity: grossEquity,
+      cash: grossCash,
+      positionsValue: grossOpenValue,
+      marketValue: grossOpenValue,
+      cumulativeReturn: (grossEquity - initialCapital) / initialCapital,
+      cumulativeReturns: (grossEquity - initialCapital) / initialCapital,
+      returns: grossReturns,
+      dailyReturn: grossReturns,
+      drawdown: 0,
+    });
+    prevGrossEquity = grossEquity;
   }
 
   return {
     candidateCount,
     shadowCount,
     trades,
+    grossTrades,
     equityCurve,
+    grossEquityCurve,
     totalCommissions,
     totalSlippage,
+    totalTaxUsd,
+    disallowedLossUsd,
     firstCandidateDateIso,
     lastCandidateDateIso,
   };
@@ -496,15 +651,31 @@ function buildTypeReport(
   initialCapital: number,
   startIso: string,
   endIso: string,
+  taxRateInfo: { effectiveTaxRatePct: number; taxRateKnown: boolean },
 ): TypeReport {
+  const start = new Date(`${startIso}T00:00:00.000Z`);
+  const end = new Date(`${endIso}T00:00:00.000Z`);
+
   const metrics = PerformanceMetricsCalculator.calculate(
     pass.equityCurve,
     pass.trades,
     initialCapital,
-    new Date(`${startIso}T00:00:00.000Z`),
-    new Date(`${endIso}T00:00:00.000Z`),
+    start,
+    end,
     pass.totalCommissions,
     pass.totalSlippage,
+  );
+  // Plan 11-09: zero commissions, zero slippage — the pre-cost comparison
+  // point. `pass.grossTrades`/`pass.grossEquityCurve` already carry zero
+  // tax by construction (built from `ZERO_COSTS` trades, never taxed).
+  const grossMetrics = PerformanceMetricsCalculator.calculate(
+    pass.grossEquityCurve,
+    pass.grossTrades,
+    initialCapital,
+    start,
+    end,
+    0,
+    0,
   );
   const usableRange =
     pass.firstCandidateDateIso && pass.lastCandidateDateIso
@@ -516,6 +687,15 @@ function buildTypeReport(
     candidateCount: pass.candidateCount,
     tradeCount: pass.trades.length,
     metrics,
+    grossMetrics,
+    costImpact: {
+      totalCommissions: pass.totalCommissions,
+      totalSlippage: pass.totalSlippage,
+      totalTaxUsd: pass.totalTaxUsd,
+      disallowedLossUsd: pass.disallowedLossUsd,
+      effectiveTaxRatePct: taxRateInfo.effectiveTaxRatePct,
+      taxRateKnown: taxRateInfo.taxRateKnown,
+    },
     thinSample: pass.trades.length < THIN_SAMPLE_TRADE_THRESHOLD,
     usableRange,
   };
@@ -541,12 +721,28 @@ export async function runLiveWindow(options: LiveWindowOptions): Promise<LiveWin
     );
   }
 
-  const config = await loadStrategyConfig();
+  const config = options.config ?? (await loadStrategyConfig());
   const initialCapital = options.initialCapital ?? config.assumedEquity;
   const costs: SimulationCosts = {
     slippagePctPerSide: options.slippagePctPerSide ?? DEFAULT_SLIPPAGE_PCT_PER_SIDE,
     commissionPerTrade: options.commissionPerTrade ?? DEFAULT_COMMISSION_PER_TRADE,
   };
+
+  // Plan 11-09 (D-24): load the tax profiles and resolve the active
+  // jurisdiction ONCE for the whole live-window run — every pass (per-type
+  // and combined) shares the same effective tax rate and loss-rule window.
+  // A misconfigured cost model propagates immediately, before any pass
+  // starts, the same way `StrategyEngine.generateCandidates` itself would
+  // fail partway through a multi-hour replay otherwise.
+  const taxProfilesFile = await loadTaxProfiles(config.costs.taxProfilesPath);
+  const activeProfile = resolveActiveProfile(taxProfilesFile, config.costs);
+  // effectiveTaxRate doesn't depend on size — a nominal size is fine here.
+  const nominalHurdle = computeNetHurdle(config.costs, activeProfile, 1);
+  const taxRateInfo = {
+    effectiveTaxRatePct: nominalHurdle.effectiveTaxRatePct,
+    taxRateKnown: nominalHurdle.taxRateKnown,
+  };
+
   const requestedTypes = options.types ?? ALL_SIGNAL_TYPES;
   const allModules = options.modules ?? defaultSignalModules();
   const modulesFor = (types: readonly SignalType[]): SignalTypeModule[] =>
@@ -608,6 +804,9 @@ export async function runLiveWindow(options: LiveWindowOptions): Promise<LiveWin
       initialCapital,
       maxSimultaneousPositions: config.maxSimultaneousPositions,
       costs,
+      effectiveTaxRate: nominalHurdle.effectiveTaxRate,
+      lossRuleWindowDays: activeProfile.lossRule.windowDays,
+      config,
       onProgress: options.onProgress,
     });
 
@@ -617,7 +816,14 @@ export async function runLiveWindow(options: LiveWindowOptions): Promise<LiveWin
     for (const type of requestedTypes) {
       const pass = await runPass(runPassArgs(type, [type]));
       shadowCandidateCount += pass.shadowCount;
-      perType[type] = buildTypeReport(type, pass, initialCapital, options.startIso, options.endIso);
+      perType[type] = buildTypeReport(
+        type,
+        pass,
+        initialCapital,
+        options.startIso,
+        options.endIso,
+        taxRateInfo,
+      );
     }
 
     const combinedPass = await runPass(runPassArgs("COMBINED", requestedTypes));
@@ -627,6 +833,7 @@ export async function runLiveWindow(options: LiveWindowOptions): Promise<LiveWin
       initialCapital,
       options.startIso,
       options.endIso,
+      taxRateInfo,
     );
 
     return {

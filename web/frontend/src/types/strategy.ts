@@ -27,6 +27,46 @@ export type CandidateMode = 'ranked' | 'sub-threshold' | 'shadow';
 /** How a VIX quote was resolved for the day it's stamped against. */
 export type VixSource = 'live' | 'cache' | 'fallback';
 
+/** Runtime-selectable jurisdiction for the after-tax/after-fees net-hurdle cost model (Plan 11-09, D-24). */
+export type Jurisdiction = 'ON-CA' | 'CA-US';
+
+/**
+ * Wash-sale (US) / superficial-loss (Canada) flag — informational only,
+ * never demotes a candidate. Mirrors `WashSaleFlag` in `src/strategy/types.ts`.
+ */
+export interface WashSaleFlag {
+  ticker: string;
+  rule: string; // "superficial-loss" | "wash-sale"
+  windowDays: number;
+  priorCandidateId: string;
+  priorClosedAt: string; // ISO 8601
+  priorRealizedPnlUsd: number;
+}
+
+/**
+ * Plan 11-09 (D-23/D-24). This mirror is DELIBERATELY NARROWER than
+ * `CandidateCostEvaluation` in `src/strategy/types.ts` — the server's
+ * `redactCostEvaluation` (`src/web/server.ts`) omits `effectiveTaxRatePct`
+ * and every dollar figure that inverts back to it (`grossRewardUsd`,
+ * `afterTaxRewardUsd`, `riskUsd`, `quantity`) before this ever reaches the
+ * browser. Widening this interface to match the backend's full shape is a
+ * SECURITY REGRESSION, not a sync fix — it would only be correct once the
+ * server itself stops redacting.
+ */
+export interface CandidateCostEvaluation {
+  jurisdiction: Jurisdiction;
+  prospectiveSizeUsd: number;
+  grossMovePct: number;
+  breakEvenPct: number;
+  netRewardRisk: number;
+  minRewardRisk: number;
+  passesBreakEven: boolean;
+  passesRewardRisk: boolean;
+  passes: boolean;
+  taxRateKnown: boolean;
+  washSaleFlag: WashSaleFlag | null;
+}
+
 export interface VixQuote {
   date: string; // ISO YYYY-MM-DD
   close: number;
@@ -65,6 +105,13 @@ export interface StrategyCandidate {
   suggestedSizeUsd: number | null;
   atrPeriodUsed: 3 | 5 | 10;
   atrValue: number;
+  /**
+   * Plan 11-09 (D-23/D-24): the after-tax/after-fees net hurdle evaluation
+   * for this candidate's prospective size, redacted server-side. `null` for
+   * shadow candidates (never sized) and degenerate-levels candidates (no
+   * priceable risk).
+   */
+  costEvaluation: CandidateCostEvaluation | null;
   /**
    * CR-02: the server joins this candidate against the decision log
    * (`GET /api/strategy/candidates`) so a page reload can hydrate

@@ -440,6 +440,32 @@ function CandidateCard({ candidate, index, decision, onAccepted, onSkipped }: Ca
         </div>
       </div>
 
+      {/* Plan 11-09 (D-23/D-24): net R:R against the active hurdle — an em
+          dash when costEvaluation is null (shadow / degenerate-levels
+          candidates), "(pre-tax)" when the operator hasn't set a marginal
+          rate so a fees-only number is never read as an after-tax one. */}
+      <div className="text-xs text-dark-text-tertiary mb-1">
+        {candidate.costEvaluation ? (
+          <>
+            Net R:R {candidate.costEvaluation.netRewardRisk.toFixed(2)} · min{' '}
+            {candidate.costEvaluation.minRewardRisk.toFixed(2)} · break-even{' '}
+            {(candidate.costEvaluation.breakEvenPct * 100).toFixed(2)}% ·{' '}
+            {candidate.costEvaluation.jurisdiction}
+            {!candidate.costEvaluation.taxRateKnown && ' (pre-tax)'}
+          </>
+        ) : (
+          <>Net R:R —</>
+        )}
+      </div>
+      {candidate.costEvaluation?.washSaleFlag && (
+        <div className="flex items-center gap-1 text-xs text-warning-400 mb-3">
+          <AlertTriangle className="w-3 h-3" aria-hidden="true" />
+          {candidate.costEvaluation.washSaleFlag.rule}: closed at a loss of{' '}
+          {formatCurrency(Math.abs(candidate.costEvaluation.washSaleFlag.priorRealizedPnlUsd))} on{' '}
+          {candidate.costEvaluation.washSaleFlag.priorClosedAt.split('T')[0]}
+        </div>
+      )}
+
       <div className="flex items-center gap-1 text-xs text-dark-text-tertiary mb-3">
         <Clock className="w-3 h-3" aria-hidden="true" />
         {candidate.timeHorizonDays} day horizon · VIX {candidate.vixRegime} (

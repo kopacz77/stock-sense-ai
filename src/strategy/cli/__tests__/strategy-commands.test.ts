@@ -33,12 +33,29 @@ class ProcessExitSignal extends Error {
 
 let intelDataDir: string;
 let strategyDataDir: string;
+let configPath: string;
 let logLines: string[];
 let errorLines: string[];
 
 beforeEach(async () => {
   intelDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "strategy-cli-intel-"));
   strategyDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "strategy-cli-strategy-"));
+  // Plan 11-09 (D-23): the real default `costs.minRewardRisk` (1.5) combined
+  // with this file's fixture candidates' 1.333 gross reward:risk (2x ATR
+  // target ÷ 1.5x ATR stop) would cost-demote every candidate this file
+  // asserts lands in `ranked` — none of which are testing the cost model.
+  // A scratch config file with a neutralized hurdle keeps those assertions
+  // meaningful; `configPath: config.js`'s ENOENT-tolerance means an absent
+  // fixture (tests that don't set `configPath` in their deps) still falls
+  // back to `DEFAULT_STRATEGY_CONFIG` untouched.
+  configPath = path.join(strategyDataDir, "strategy-config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      costs: { spreadSlippageBps: 0, fxSpreadBps: 0, minRewardRisk: 0.01 },
+    }),
+    "utf8",
+  );
   logLines = [];
   errorLines = [];
   vi.spyOn(console, "log").mockImplementation((msg?: unknown) => {
@@ -170,6 +187,7 @@ function defaultDeps(): StrategyCommandsDeps {
     strategyDataDir,
     vixProvider: new StubVixProvider(),
     marketData: new StubMarketData(),
+    configPath,
   };
 }
 
@@ -277,7 +295,7 @@ describe("strategy CLI — full subcommand surface", () => {
     expect(out).not.toMatch(/\[pending\][^\n]* XLE /);
   });
 
-  it("all nine subcommands are registered, including backtest (M2-05 Plan 11-06)", () => {
+  it("all ten subcommands are registered, including backtest (M2-05 Plan 11-06) and costs (Plan 11-09)", () => {
     const program = buildProgram(defaultDeps());
     const strategyCmd = program.commands.find((c) => c.name() === "strategy");
     const subcommandNames = strategyCmd?.commands.map((c) => c.name()) ?? [];
@@ -292,6 +310,7 @@ describe("strategy CLI — full subcommand surface", () => {
       "show-vix",
       "show-substrate",
       "backtest",
+      "costs",
     ]);
   });
 });

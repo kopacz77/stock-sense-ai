@@ -15,7 +15,11 @@ import { TechnicalIndicators } from "../analysis/technical-indicators.js";
 import { JsonlStore } from "../market-intelligence/storage/jsonl-store.js";
 import { loadStrategyConfig } from "../strategy/config.js";
 import { DecisionLog } from "../strategy/decision-log.js";
-import type { StrategyCandidate, StrategyDecisionRecord } from "../strategy/types.js";
+import type {
+  CandidateCostEvaluation,
+  StrategyCandidate,
+  StrategyDecisionRecord,
+} from "../strategy/types.js";
 import type { VixQuote } from "../strategy/vix-provider.js";
 import {
   authMiddleware,
@@ -104,19 +108,75 @@ const AUTH_REQUIRED = process.env.AUTH_REQUIRED === "true";
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
 
 /**
+ * T-11-09-01: the redacted mirror of `CandidateCostEvaluation` that reaches
+ * the browser. Omits `effectiveTaxRatePct` (a direct read on the
+ * operator's personal tax bracket) and every dollar figure that inverts
+ * back to it given a known size (`grossRewardUsd`, `afterTaxRewardUsd`,
+ * `riskUsd`, `quantity`) — the endpoint sits behind `optionalAuthMiddleware`
+ * and may serve an unauthenticated local request.
+ */
+export type RedactedCostEvaluation = Pick<
+  CandidateCostEvaluation,
+  | "jurisdiction"
+  | "prospectiveSizeUsd"
+  | "grossMovePct"
+  | "breakEvenPct"
+  | "netRewardRisk"
+  | "minRewardRisk"
+  | "passesBreakEven"
+  | "passesRewardRisk"
+  | "passes"
+  | "taxRateKnown"
+  | "washSaleFlag"
+>;
+
+/**
+ * `null` for a `null` input, otherwise a copy built by naming each KEPT
+ * field explicitly — never by deleting keys from a spread, which would
+ * leak a field added to `CandidateCostEvaluation` later by default.
+ */
+export function redactCostEvaluation(
+  evaluation: CandidateCostEvaluation | null,
+): RedactedCostEvaluation | null {
+  if (evaluation === null) return null;
+  return {
+    jurisdiction: evaluation.jurisdiction,
+    prospectiveSizeUsd: evaluation.prospectiveSizeUsd,
+    grossMovePct: evaluation.grossMovePct,
+    breakEvenPct: evaluation.breakEvenPct,
+    netRewardRisk: evaluation.netRewardRisk,
+    minRewardRisk: evaluation.minRewardRisk,
+    passesBreakEven: evaluation.passesBreakEven,
+    passesRewardRisk: evaluation.passesRewardRisk,
+    passes: evaluation.passes,
+    taxRateKnown: evaluation.taxRateKnown,
+    washSaleFlag: evaluation.washSaleFlag,
+  };
+}
+
+/**
  * CR-02: `GET /api/strategy/candidates` never joined against the decision
  * log, so `StrategyPage` tracked accept/skip purely in local React state —
  * a reload lost it and let the operator re-accept (and silently
  * overwrite) an already-decided candidate. Attach the deduped decision
  * status here so the frontend can hydrate on every load, exported for
- * direct unit testing.
+ * direct unit testing. Also redacts `costEvaluation` (Plan 11-09,
+ * T-11-09-01) so all three of ranked/sub-threshold/shadow are covered by
+ * this one change.
  */
 export function attachDecisionStatus(
   candidate: StrategyCandidate,
   decisionByCandidateId: Map<string, StrategyDecisionRecord>,
-): StrategyCandidate & { decision: "accept" | "skip" | null } {
+): Omit<StrategyCandidate, "costEvaluation"> & {
+  decision: "accept" | "skip" | null;
+  costEvaluation: RedactedCostEvaluation | null;
+} {
   const decision = decisionByCandidateId.get(candidate.candidateId);
-  return { ...candidate, decision: decision?.decision ?? null };
+  return {
+    ...candidate,
+    decision: decision?.decision ?? null,
+    costEvaluation: redactCostEvaluation(candidate.costEvaluation),
+  };
 }
 
 /**

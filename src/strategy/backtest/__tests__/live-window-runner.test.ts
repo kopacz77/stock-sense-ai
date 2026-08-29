@@ -16,6 +16,8 @@ import { describe, expect, it } from "vitest";
 
 import type { OHLCVData } from "../../../data/types.js";
 import type { TickerDaySummary } from "../../../market-intelligence/signal/types.js";
+import { DEFAULT_STRATEGY_CONFIG } from "../../config.js";
+import type { StrategyConfig } from "../../config.js";
 import type { MarketDataSource, VixSource } from "../../strategy-engine.js";
 import type {
   RawSignal,
@@ -263,6 +265,27 @@ async function writeContinuousRollups(startIso: string, endIso: string): Promise
   }
 }
 
+/**
+ * Plan 11-09 (D-23): every non-shadow candidate now runs through the
+ * after-tax/after-fees net hurdle before it can be admitted as a real
+ * position. The shipped default `costs.minRewardRisk` (1.5) combined with
+ * this file's default `makeRaw`/`levels.ts` fixtures (2x ATR target ÷ 1.5x
+ * ATR stop = a 1.333 gross reward:risk) would otherwise cost-demote every
+ * candidate here — none of which are testing the cost model. Neutralizes
+ * the hurdle the same way `strategy-engine.test.ts`'s `baseConfig()` does.
+ */
+function relaxedCostsConfig(): StrategyConfig {
+  return {
+    ...DEFAULT_STRATEGY_CONFIG,
+    costs: {
+      ...DEFAULT_STRATEGY_CONFIG.costs,
+      spreadSlippageBps: 0,
+      fxSpreadBps: 0,
+      minRewardRisk: 0.01,
+    },
+  };
+}
+
 describe("runLiveWindow", () => {
   it("never imports regime-segmenter", async () => {
     const raw = await fs.readFile(
@@ -309,6 +332,7 @@ describe("runLiveWindow", () => {
         modules: [module],
         marketData: new StubMarketData(),
         vixProvider: new StubVixProvider(),
+        config: relaxedCostsConfig(),
       });
 
       const perType = report.perType.SECTOR_ROTATION_FROM_PM;
@@ -402,6 +426,7 @@ describe("runLiveWindow", () => {
         modules: [module],
         marketData: new MovingMarketData(),
         vixProvider: new StubVixProvider(),
+        config: relaxedCostsConfig(),
       });
 
       expect(report.label).toBe(LIVE_WINDOW_LABEL);
@@ -415,6 +440,350 @@ describe("runLiveWindow", () => {
       await fs.rm(intelDataDir, { recursive: true, force: true });
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 11-09 (D-24): gross vs after-cost, tax on the loss-offset bucket, and
+// the disallowed-loss rule.
+// ---------------------------------------------------------------------------
+
+describe("runLiveWindow — gross vs after-cost + tax + disallowed loss (Plan 11-09)", () => {
+  function relaxedConfig(overrides: Partial<StrategyConfig["costs"]> = {}): StrategyConfig {
+    return {
+      ...DEFAULT_STRATEGY_CONFIG,
+      costs: {
+        ...DEFAULT_STRATEGY_CONFIG.costs,
+        fxSpreadBps: 0,
+        minRewardRisk: 0.01, // isolate these tests from the ranking gate — they test cost/tax accounting, not the hurdle
+        ...overrides,
+      },
+    };
+  }
+
+  /**
+   * Flat at 100 before `turnIso` (small, stable ATR for the lookback), then
+   * moves `jumpPerDay` × days-since-turn in `directionAfterTurn` — a jump
+   * that reliably blows through a 2x-ATR target or a 1.5x-ATR stop within a
+   * day or two, giving deterministic win/loss control per test.
+   */
+  class ControlledMarketData implements MarketDataSource {
+    constructor(
+      private readonly turnIso: string,
+      private readonly directionAfterTurn: 1 | -1,
+      private readonly jumpPerDay = 3,
+    ) {}
+    async fetchHistoricalData(
+      _symbol: string,
+      from: Date,
+      to: Date = new Date(),
+    ): Promise<OHLCVData[]> {
+      const turnMs = Date.parse(`${this.turnIso}T00:00:00.000Z`);
+      const bars: OHLCVData[] = [];
+      for (
+        let cursor = new Date(from);
+        cursor.getTime() <= to.getTime();
+        cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000)
+      ) {
+        const iso = cursor.toISOString().split("T")[0] ?? "";
+        const daysAfterTurn = Math.round((cursor.getTime() - turnMs) / (24 * 60 * 60 * 1000));
+        const close =
+          daysAfterTurn > 0 ? 100 + this.directionAfterTurn * this.jumpPerDay * daysAfterTurn : 100;
+        bars.push({
+          date: iso,
+          open: close,
+          high: close + 0.5,
+          low: close - 0.5,
+          close,
+          volume: 1_000_000,
+        });
+      }
+      return bars;
+    }
+  }
+
+  it("gross P&L is >= after-cost P&L, and gross/after-cost trade counts match, with non-zero commissions+slippage", async () => {
+    intelDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "live-window-intel-"));
+    try {
+      const startIso = "2026-06-01";
+      const endIso = "2026-06-10";
+      await writeContinuousRollups(startIso, endIso);
+      const signals: Record<string, RawSignal[]> = {
+        [startIso]: [
+          makeRaw({
+            signalType: "SECTOR_ROTATION_FROM_PM",
+            ticker: "XLE",
+            score: 0.9,
+            direction: "long",
+            timeHorizonDays: 5,
+          }),
+        ],
+      };
+      const module = makeDayKeyedModule({ signalType: "SECTOR_ROTATION_FROM_PM", mode: "core", signals });
+
+      const report = await runLiveWindow({
+        startIso,
+        endIso,
+        types: ["SECTOR_ROTATION_FROM_PM"],
+        intelDataDir,
+        initialCapital: 100_000,
+        modules: [module],
+        marketData: new ControlledMarketData(startIso, 1),
+        vixProvider: new StubVixProvider(),
+        config: relaxedConfig({ perTradeFeeUsd: 5, spreadSlippageBps: 10, marginalRatePct: null }),
+      });
+
+      const combined = report.combined;
+      expect(combined.tradeCount).toBeGreaterThan(0);
+      // Same number of gross trades as after-cost trades (identical entry/
+      // exit dates by construction — both computed via simulateCandidate
+      // over the SAME candidate/bars, differing only in the costs argument,
+      // which the exit-trigger logic never reads).
+      expect(combined.grossMetrics.totalTrades).toBe(combined.tradeCount);
+      expect(combined.grossMetrics.totalReturnDollar).toBeGreaterThanOrEqual(
+        combined.metrics.totalReturnDollar,
+      );
+      // marginalRatePct: null -> zero tax; the only gap is commissions+slippage.
+      expect(combined.costImpact.totalTaxUsd).toBe(0);
+      expect(combined.costImpact.taxRateKnown).toBe(false);
+      const gap = combined.grossMetrics.totalReturnDollar - combined.metrics.totalReturnDollar;
+      expect(gap).toBeCloseTo(
+        combined.costImpact.totalCommissions + combined.costImpact.totalSlippage,
+        0,
+      );
+    } finally {
+      await fs.rm(intelDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("adding the gross path does not increase the number of engine replays", async () => {
+    intelDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "live-window-intel-"));
+    try {
+      const startIso = "2026-06-01";
+      const endIso = "2026-06-05"; // 5 usable days
+      await writeContinuousRollups(startIso, endIso);
+      let generateCallCount = 0;
+      const module: SignalTypeModule = {
+        signalType: "SECTOR_ROTATION_FROM_PM",
+        mode: "core",
+        async generate() {
+          generateCallCount++;
+          return [];
+        },
+      };
+
+      await runLiveWindow({
+        startIso,
+        endIso,
+        types: ["SECTOR_ROTATION_FROM_PM"],
+        intelDataDir,
+        modules: [module],
+        marketData: new StubMarketData(),
+        vixProvider: new StubVixProvider(),
+        config: relaxedConfig(),
+      });
+
+      // One requested type -> one isolated pass + one combined pass (same
+      // single type) = 2 passes x 5 days = 10 calls. The gross path is pure
+      // arithmetic over cached bars inside runPass — it never calls
+      // generateCandidates a second time. If it did, this would be 20.
+      expect(generateCallCount).toBe(10);
+    } finally {
+      await fs.rm(intelDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("a winning trade's after-cost P&L is reduced by the effective tax rate on the taxable portion", async () => {
+    intelDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "live-window-intel-"));
+    try {
+      const startIso = "2026-06-01";
+      const endIso = "2026-06-10";
+      await writeContinuousRollups(startIso, endIso);
+      const signals: Record<string, RawSignal[]> = {
+        [startIso]: [
+          makeRaw({
+            signalType: "SECTOR_ROTATION_FROM_PM",
+            ticker: "XLE",
+            score: 0.9,
+            direction: "long",
+            timeHorizonDays: 5,
+          }),
+        ],
+      };
+      const module = makeDayKeyedModule({ signalType: "SECTOR_ROTATION_FROM_PM", mode: "core", signals });
+
+      const report = await runLiveWindow({
+        startIso,
+        endIso,
+        types: ["SECTOR_ROTATION_FROM_PM"],
+        intelDataDir,
+        initialCapital: 100_000,
+        modules: [module],
+        marketData: new ControlledMarketData(startIso, 1), // price rises -> TAKE_PROFIT
+        vixProvider: new StubVixProvider(),
+        config: relaxedConfig({
+          perTradeFeeUsd: 0,
+          spreadSlippageBps: 0,
+          jurisdiction: "ON-CA",
+          marginalRatePct: 40,
+          capitalGainsInclusionPct: null, // use the ON-CA profile's own 50%
+        }),
+      });
+
+      const combined = report.combined;
+      expect(combined.tradeCount).toBeGreaterThan(0);
+      expect(combined.metrics.totalReturnDollar).toBeGreaterThan(0); // a real win
+      expect(combined.costImpact.taxRateKnown).toBe(true);
+      expect(combined.costImpact.totalTaxUsd).toBeGreaterThan(0);
+      // effectiveTaxRate = 0.40 * 0.50 = 0.20; with zero commission/slippage
+      // the gross P&L IS the pre-tax after-cost P&L.
+      const grossPnl = combined.grossMetrics.totalReturnDollar;
+      expect(combined.costImpact.totalTaxUsd).toBeCloseTo(grossPnl * 0.2, 0);
+      expect(combined.costImpact.effectiveTaxRatePct).toBeCloseTo(20, 1);
+    } finally {
+      await fs.rm(intelDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("a losing trade carries no tax benefit line of its own — totalTaxUsd stays 0", async () => {
+    intelDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "live-window-intel-"));
+    try {
+      const startIso = "2026-06-01";
+      const endIso = "2026-06-10";
+      await writeContinuousRollups(startIso, endIso);
+      const signals: Record<string, RawSignal[]> = {
+        [startIso]: [
+          makeRaw({
+            signalType: "SECTOR_ROTATION_FROM_PM",
+            ticker: "XLE",
+            score: 0.9,
+            direction: "long",
+            timeHorizonDays: 5,
+          }),
+        ],
+      };
+      const module = makeDayKeyedModule({ signalType: "SECTOR_ROTATION_FROM_PM", mode: "core", signals });
+
+      const report = await runLiveWindow({
+        startIso,
+        endIso,
+        types: ["SECTOR_ROTATION_FROM_PM"],
+        intelDataDir,
+        initialCapital: 100_000,
+        modules: [module],
+        marketData: new ControlledMarketData(startIso, -1), // price falls -> STOP_LOSS
+        vixProvider: new StubVixProvider(),
+        config: relaxedConfig({
+          perTradeFeeUsd: 0,
+          spreadSlippageBps: 0,
+          jurisdiction: "ON-CA",
+          marginalRatePct: 40,
+        }),
+      });
+
+      const combined = report.combined;
+      expect(combined.tradeCount).toBeGreaterThan(0);
+      expect(combined.metrics.totalReturnDollar).toBeLessThan(0); // a real loss
+      expect(combined.costImpact.totalTaxUsd).toBe(0);
+    } finally {
+      await fs.rm(intelDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("a loss followed by a re-entry on the same ticker INSIDE the loss window is excluded from the offset bucket and counted in disallowedLossUsd", async () => {
+    intelDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "live-window-intel-"));
+    try {
+      const startIso = "2026-06-01";
+      const endIso = "2026-06-20";
+      await writeContinuousRollups(startIso, endIso);
+      const signals: Record<string, RawSignal[]> = {
+        "2026-06-01": [
+          makeRaw({
+            signalType: "SECTOR_ROTATION_FROM_PM",
+            ticker: "XLE",
+            score: 0.9,
+            direction: "long",
+            timeHorizonDays: 3,
+          }),
+        ],
+        "2026-06-08": [
+          // Well inside the real ON-CA superficial-loss 30-day window,
+          // safely after the first position's ~day-2 stop-loss close.
+          makeRaw({
+            signalType: "SECTOR_ROTATION_FROM_PM",
+            ticker: "XLE",
+            score: 0.9,
+            direction: "long",
+            timeHorizonDays: 3,
+          }),
+        ],
+      };
+      const module = makeDayKeyedModule({ signalType: "SECTOR_ROTATION_FROM_PM", mode: "core", signals });
+
+      const report = await runLiveWindow({
+        startIso,
+        endIso,
+        types: ["SECTOR_ROTATION_FROM_PM"],
+        intelDataDir,
+        initialCapital: 100_000,
+        modules: [module],
+        marketData: new ControlledMarketData(startIso, -1), // both entries lose
+        vixProvider: new StubVixProvider(),
+        config: relaxedConfig({ perTradeFeeUsd: 0, spreadSlippageBps: 0, marginalRatePct: null }),
+      });
+
+      expect(report.combined.costImpact.disallowedLossUsd).toBeGreaterThan(0);
+    } finally {
+      await fs.rm(intelDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("the identical sequence with the re-entry OUTSIDE the loss window leaves the bucket intact and disallowedLossUsd at 0", async () => {
+    intelDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "live-window-intel-"));
+    try {
+      const startIso = "2026-06-01";
+      const endIso = "2026-08-01"; // wide enough to place a re-entry >30 days after the first close
+      await writeContinuousRollups(startIso, endIso);
+      const signals: Record<string, RawSignal[]> = {
+        "2026-06-01": [
+          makeRaw({
+            signalType: "SECTOR_ROTATION_FROM_PM",
+            ticker: "XLE",
+            score: 0.9,
+            direction: "long",
+            timeHorizonDays: 3,
+          }),
+        ],
+        "2026-07-15": [
+          // 44 days after the first close (~06-03) — outside the real
+          // ON-CA 30-day superficial-loss window.
+          makeRaw({
+            signalType: "SECTOR_ROTATION_FROM_PM",
+            ticker: "XLE",
+            score: 0.9,
+            direction: "long",
+            timeHorizonDays: 3,
+          }),
+        ],
+      };
+      const module = makeDayKeyedModule({ signalType: "SECTOR_ROTATION_FROM_PM", mode: "core", signals });
+
+      const report = await runLiveWindow({
+        startIso,
+        endIso,
+        types: ["SECTOR_ROTATION_FROM_PM"],
+        intelDataDir,
+        initialCapital: 100_000,
+        modules: [module],
+        marketData: new ControlledMarketData(startIso, -1),
+        vixProvider: new StubVixProvider(),
+        config: relaxedConfig({ perTradeFeeUsd: 0, spreadSlippageBps: 0, marginalRatePct: null }),
+      });
+
+      expect(report.combined.costImpact.disallowedLossUsd).toBe(0);
+    } finally {
+      await fs.rm(intelDataDir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------

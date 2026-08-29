@@ -18,10 +18,32 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { TickerDaySummary } from "../../market-intelligence/signal/types.js";
 import type { OHLCVData } from "../../data/types.js";
+import { DEFAULT_STRATEGY_CONFIG } from "../config.js";
 import { DecisionLog } from "../decision-log.js";
 import type { MarketDataSource, VixSource } from "../strategy-engine.js";
 import { StrategyEngine } from "../strategy-engine.js";
 import type { VixQuote } from "../vix-provider.js";
+
+/**
+ * Plan 11-09 (D-23): every non-shadow candidate now runs through the
+ * after-tax/after-fees net hurdle before it can rank. The shipped default
+ * `costs.minRewardRisk` (1.5) combined with this fixture's 2x ATR target ÷
+ * 1.5x ATR stop (a 1.333 gross reward:risk) would otherwise cost-demote the
+ * very candidate this tracer test exists to prove — neutralized the same
+ * way `strategy-engine.test.ts`'s `baseConfig()` does, since this test is
+ * about the phase-level ranked→accepted slice, not the cost model.
+ */
+function relaxedCostsConfig() {
+  return {
+    ...DEFAULT_STRATEGY_CONFIG,
+    costs: {
+      ...DEFAULT_STRATEGY_CONFIG.costs,
+      spreadSlippageBps: 0,
+      fxSpreadBps: 0,
+      minRewardRisk: 0.01,
+    },
+  };
+}
 
 let intelDataDir: string;
 let strategyDataDir: string;
@@ -143,6 +165,7 @@ describe("StrategyEngine tracer (SECTOR_ROTATION_FROM_PM only)", () => {
       strategyDataDir,
       vixProvider: new StubVixProvider(),
       marketData: new StubMarketData(),
+      config: relaxedCostsConfig(),
     });
 
     const result = await engine.generateCandidates(asOfDate);
