@@ -305,7 +305,7 @@ Plans:
 - [x] 11-06-PLAN.md — Live-window backtest gate over the real 2026 substrate + `docs/M2-05_BACKTEST_GAP.md` (Wave 4)
 - [x] 11-07-PLAN.md — Minimal `/strategy` web route + three validated `/api/strategy/*` endpoints (Wave 4)
 - [x] 11-08-PLAN.md — Iran-ceasefire worked example, phase acceptance run, validation sign-off (Wave 5)
-- [ ] 11-09-PLAN.md — GAP: after-tax/after-fees net hurdle on targets — `config/tax-profiles.json` (ON-CA + CA-US), `src/strategy/costs.ts`, cost demotion, wash-sale/superficial-loss flag, gross-vs-after-cost backtest, `strategy costs --show` (Wave 6)
+- [x] 11-09-PLAN.md — GAP: after-tax/after-fees net hurdle on targets — `config/tax-profiles.json` (ON-CA + CA-US), `src/strategy/costs.ts`, cost demotion, wash-sale/superficial-loss flag, gross-vs-after-cost backtest, `strategy costs --show` (Wave 6)
 
 **Estimated effort**: 5-7 days
 

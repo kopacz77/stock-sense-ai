@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 11
 status: completed
-stopped_at: Completed 11-08-PLAN.md — Phase 11 (M2-05) execution complete, operator-approved
-last_updated: "2026-08-28T21:13:33.558Z"
+stopped_at: Completed 11-09-PLAN.md — after-tax/after-fees net hurdle gap plan, all 3 tasks landed and verified against real ./data/intel; flagged the CATALYST_ANCHORED hurdle-collision finding for operator decision
+last_updated: "2026-08-29T00:28:57.026Z"
 progress:
   total_phases: 0
   completed_phases: 0
@@ -24,7 +24,7 @@ current_phase_name: ai-strategy
 | Current Phase | 11 |
 | Status | All phases complete |
 | Last Pivot | 2026-05-23 |
-| Last Updated | 2026-08-28 (11-08 phase close-out: worked example, honest acceptance numbers, operator approved closing the phase) |
+| Last Updated | 2026-08-29 (11-09 gap plan: after-tax/after-fees net hurdle landed, verified against real ./data/intel) |
 
 ---
 
@@ -49,7 +49,7 @@ current_phase_name: ai-strategy
 | M2-02 | Alpaca Paper Integration | pending | — | — |
 | M2-03 | Market Intelligence Bot | ✅ COMPLETE | 2026-05-23 | 2026-05-28 |
 | M2-04 | LLM Trade-Signal Layer | ✅ COMPLETE | 2026-05-31 | 2026-05-31 |
-| M2-05 | AI-Augmented Strategy Engine | 🔄 EXECUTION COMPLETE (8/8 plans, operator-approved 2026-08-28); pending `/gsd-verify-work` | 2026-08-27 | — |
+| M2-05 | AI-Augmented Strategy Engine | 🔄 EXECUTION COMPLETE (9/9 plans incl. gap plan 11-09, operator-approved 2026-08-28); pending `/gsd-verify-work` | 2026-08-27 | — |
 | M2-06 | Hard Risk Management | pending | — | — |
 | M2-07 | Live Execution + Tax Tracking | pending | — | — |
 
@@ -57,7 +57,7 @@ current_phase_name: ai-strategy
 
 ## Active Work
 
-**Current Focus**: **M2-05 (Phase 11) is execution-complete and operator-approved** (8/8 plans, 2026-08-28). Next: run the verifier (`/gsd-verify-work` or equivalent) to formally close the phase, then scope gap plan **11-09** (after-tax/after-fees target hurdle, per `11-CONTEXT.md`).
+**Current Focus**: **M2-05 (Phase 11) is execution-complete** (9/9 plans, 2026-08-29 — gap plan **11-09** after-tax/after-fees net hurdle landed). Next: run the verifier (`/gsd-verify-work` or equivalent) to formally close the phase.
 
 **Data reality (2026-08-27)** — what M2-05 can actually train/validate on:
 
@@ -72,8 +72,8 @@ current_phase_name: ai-strategy
 
 **Next Actions**:
 
-1. Run the phase verifier (`/gsd-verify-work` or equivalent) to formally close Phase 11 (M2-05) — execution is done, operator has approved, but the verifier gate is separate.
-2. Scope gap plan **11-09** (after-tax/after-fees target hurdle) — locked in `11-CONTEXT.md` (commits `9f57408`, `b5404ca`), queued by the operator immediately after phase verification.
+1. Run the phase verifier (`/gsd-verify-work` or equivalent) to formally close Phase 11 (M2-05) — execution is done (9/9 plans incl. gap plan 11-09), but the verifier gate is separate.
+2. **Operator decision needed**: `strategy costs --show` + a real `strategy run` now show that under the shipped default config (`costs.minRewardRisk: 1.5`, ON-CA), CATALYST_ANCHORED's uniform `2×ATR` target / `1.5×ATR` stop formula (locked in Plan 11-02) never clears 1.5:1 gross, so every real CATALYST_ANCHORED candidate is cost-demoted — see 11-09-SUMMARY.md's "most important operational finding". Two independent levers exist (widen the target multiple in `levels.ts`, or lower `costs.minRewardRisk`); this plan intentionally takes no position on which.
 3. Drain the score backlog (`pnpm intel backlog-drain --manage-server`) to unblock `SENTIMENT_VELOCITY`/`FADE_OVERSHOOT` coverage — a documented M2-05 follow-up, not a blocker.
 4. Decide the LLM provider question (above) — it changes how fast the corpus grows and whether the scorer-down failure mode can recur.
 5. Operator manual setup carried over: FRED_API_KEY (8 macro feeds), `config/fda-pdufa-seed.json` quarterly, `config/opec-schedule-seed.json` + `EIA_HOLIDAY_SHIFTS` each December, and confirm the 8 FOMC seed dates in `config/fomc-schedule-seed.json` against federalreserve.gov.
@@ -125,6 +125,7 @@ current_phase_name: ai-strategy
 | 2026-08-28 | Plan 11-05 | Four-module registry + cross-type ranking + full strategy CLI landed (commits 84e67ee, 69f8304, f750a9b). `signals/index.ts` (`defaultSignalModules()`); `strategy-engine.ts` gains `assertModulesMatchConfig`/`SignalModeMismatchError`, per-module gate/throw isolation into `skippedTypes`, structural shadow-mode partition, `resolveTickerCollisions` + `rankCandidates` (raw-score-only comparator, D-04). CLI gains `show-substrate`, `run --types`, `list-candidates --include-shadow`, and the fixed D-14 output ordering (VIX/ranked-or-empty/sub-threshold/shadow/skipped-types). 24 new vitest cases; full suite 563/563 green; `pnpm tsc --noEmit` clean. Verified against real `data/intel` (2026-08-26): 5 ranked CATALYST_ANCHORED, 3 sub-threshold, 12 FADE_OVERSHOOT shadow (all size=—), SENTIMENT_VELOCITY gated off with its coverage-gap reason printed verbatim. Deferred (out of scope): a pre-existing Finnhub-API-key-in-error-logs finding, logged to `.planning/phases/11-ai-strategy/deferred-items.md`. See 11-05-SUMMARY.md. |
 | 2026-08-28 | Plan 11-06 | Live-window backtest gate (D-15) landed (commits f0cdc96, 950efb6, 44bc626). `src/strategy/backtest/live-window-runner.ts` — `runLiveWindow`/`simulateCandidate`/`LIVE_WINDOW_LABEL`/`THIN_SAMPLE_TRADE_THRESHOLD`, per-type isolated engine runs (`modules: [oneType]`, the real `strategy run --types` code path) plus one cross-type combined run, `PerformanceMetricsCalculator.calculate()` called directly with zero `regime-segmenter` involvement, read-only against `data/intel/` (default window starts 2026-05-31, not RESEARCH's aspirational 2026-05-23, since reaching it would require a write this execution's constraints forbid). `strategy backtest` ships as the ninth and final CLI subcommand. `docs/M2-05_BACKTEST_GAP.md` records the structural per-regime gap (`REGIMES` ends 2025-12-31 vs substrate starting 2026-05-23/05-31), why fetching PM history doesn't rescue it, and both unlock paths. Real run (`--start 2026-08-15 --end 2026-08-19`, 803.0s, all four types): combined Sharpe -5.01 **FAIL**, MaxDD -1.7% PASS, overall FAIL — recorded honestly per the plan's own instruction, not tuned. The literal 20-day acceptance command was abandoned twice after live, confirmed Yahoo Finance IP-level rate-limiting (`curl` → `HTTP/2 429`) made per-ticker fetches stall for minutes inside the long-running CLI process even though the same ticker fetched standalone succeeded in under 300ms; logged to `deferred-items.md` item 2 for 11-08's own full-default-window re-run. 174 vitest cases green (162 in `src/strategy`, full suite 577/577); `pnpm tsc --noEmit` clean. See 11-06-SUMMARY.md. |
 | 2026-08-28 | Plan 11-07 | Minimal `/strategy` web route + three `/api/strategy/*` endpoints landed (commits 4ce4046, 753e4e6) and operator-approved after a checkpoint that found and fixed two bugs. `src/web/server.ts` gains `GET /api/strategy/candidates` (reads persisted `candidates-*.jsonl`, never re-runs the engine — T-11-07-05), `POST .../:id/accept` and `.../skip`, all three registered post-auth-middleware inheriting `/api/monitoring/*`'s access level (T-11-07-01), `StrategyAcceptSchema`/`StrategySkipSchema` Zod validation with a hard 2x-regime-size `sizeUsd` cap (T-11-07-02), and calling the exact `DecisionLog.recordAccept`/`recordSkip` the CLI calls. `web/frontend/src/pages/StrategyPage.tsx` (509 lines, new) renders VIX/regime header, ranked/sub-threshold/shadow sections with full untruncated rationale, inline editable accept/skip, and D-14's honest empty state. Checkpoint found the page unusable on first load (react-router "Throttling navigation" + HTTP 429 flood) — diagnosed as a pre-existing `TabRouteSync` ping-pong (also looped `/discovery` before 11-07 existed) fixed via a `useRef` URL-origin flag (commit 2eb7a32), and a `list-candidates` decisions-lookup bug that only read the candidate's own day instead of `[dateIso, today]` (commit b58d200). Operator then completed the real round-trip: accepted the NVDA CATALYST_ANCHORED candidate with an edited entry (213.05), verified on disk in `decisions-2026-08-28.jsonl` and via `list-candidates --date 2026-08-26` → `[accepted]`. 578/578 vitest green, `pnpm tsc --noEmit` clean. `skippedTypes` in the GET response is always `[]` today (not persisted by the engine) — logged to `deferred-items.md` item 3. See 11-07-SUMMARY.md. |
+| 2026-08-29 | Plan 11-09 (gap) | After-tax/after-fees net hurdle landed (commits 4d1523b, 42bc1de, 21d3eab). `config/tax-profiles.json` (new) ships both ON-CA and CA-US fully specified, every rate annotated with source/asOf/confirmWithAccountant/`verified:false`. `src/strategy/costs.ts` (new) computes the two-part hurdle (fee/slippage/FX/regulatory-fee break-even + after-tax reward:pre-tax risk) and demotes failing candidates into `subThreshold` reusing WR-01's exact degenerate-levels shape — target and score never mutated. Wash-sale/superficial-loss flag reads the decision log ONCE per run. `DecisionLog.recordAccept` now writes real `afterTaxRewardUsd`/`costJurisdiction`/`costEffectiveTaxRatePct` from the operator's own levels. `live-window-runner.ts` reports gross-vs-after-cost with a forward-only tax/loss-offset-bucket/disallowed-loss walk. `strategy costs --show`, `strategy run`'s hurdle line + per-candidate net R:R, and `strategy backtest`'s gross/after-cost split all shipped; the web card shows net R:R while `redactCostEvaluation` keeps the operator's tax bracket server-side. 65 new/extended vitest cases, full suite 625/625 green, `pnpm tsc --noEmit`/frontend `tsc`/`pnpm build:frontend` all clean. **Real-data finding**: under the shipped default config, the hurdle now legitimately fails every real CATALYST_ANCHORED candidate (1.333:1 gross reward:risk from Plan 11-02's uniform `2×ATR` target / `1.5×ATR` stop, below the 1.5 minimum even pre-tax) — flagged for operator decision, not silently absorbed. See 11-09-SUMMARY.md. |
 
 ---
 
@@ -151,6 +152,7 @@ current_phase_name: ai-strategy
 - [Phase ?]: 11-06: live-window backtest gate (D-15) shipped end-to-end; docs/M2-05_BACKTEST_GAP.md records the structural per-regime gap; real 5-day live run recorded combined Sharpe -5.01 (FAIL, thin-sample) after live Yahoo Finance rate-limiting made the full 20-day/90-day windows impractical this session — see 11-06-SUMMARY.md
 - [Phase ?]: 11-07: minimal /strategy web route + three /api/strategy/* endpoints shipped, operator-approved after checkpoint fixed a pre-existing React Router tab/URL ping-pong (also fixed a /discovery deep-link loop) and a list-candidates decisions date-window bug; real accept round-tripped to decisions-2026-08-28.jsonl on disk — see 11-07-SUMMARY.md
 - [Phase ?]: 11-08: Phase M2-05 closed — operator approved with backtest FAIL (thin-sample) and pre-screen retention miss (0.696 vs 0.85) accepted as documented gaps; 0.4 floor and VIX 15/25 boundaries kept as-is pending real live data
+- [Phase ?]: 11-09 (gap): after-tax/after-fees net hurdle shipped both ON-CA/CA-US tax profiles, cost demotion, wash-sale flag, gross-vs-after-cost backtest, and web/CLI net R:R surfaces; real-data verification found the shipped-default hurdle now fails every real CATALYST_ANCHORED candidate (1.333:1 gross R:R from Plan 11-02's ATR multiples, below the 1.5 minimum pre-tax) — flagged for an explicit operator decision on `levels.ts`'s target multiple vs. `costs.minRewardRisk`, not resolved by this plan — see 11-09-SUMMARY.md
 
 ### 2026-05-31: Plan 10-06 — Scheduled Digest Delivery + Break-Glass (Replacing M2-03 Bare 4-Cap)
 
@@ -581,9 +583,10 @@ This was the explicit acceptance fixture for M2-04 and it passes. The data subst
 | Phase 11 P06 | 55min | 3 tasks | 7 files |
 | Phase 11 P07 | ~2h10min | 3 tasks | 9 files |
 | Phase 11 P08 | ~1h40min | 3 tasks | 3 files |
+| Phase 11 P09 | 2h58min | 3 tasks | 21 files |
 
 ## Session
 
-**Last session:** 2026-08-28T20:28:40.333Z
-**Stopped at:** Completed 11-08-PLAN.md — Phase 11 (M2-05) execution complete, operator-approved
+**Last session:** 2026-08-29T00:28:57.000Z
+**Stopped at:** Completed 11-09-PLAN.md — after-tax/after-fees net hurdle gap plan, all 3 tasks landed and verified against real ./data/intel; flagged the CATALYST_ANCHORED hurdle-collision finding for operator decision
 **Resume file:** None
