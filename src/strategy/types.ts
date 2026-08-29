@@ -55,6 +55,15 @@ export type Jurisdiction = "ON-CA" | "CA-US";
  * demotes a candidate; only annotates it and its rationale.
  */
 export interface WashSaleFlag {
+  /**
+   * The flagged candidate's own ticker. Always equal to the candidate it is
+   * attached to (a flag is only built by looking up THAT candidate's own
+   * ticker in the loss-closure map) — carried on the flag anyway so it
+   * stays self-describing wherever it travels independently (the persisted
+   * JSONL row, the redacted web payload, `washSaleRationaleNote`'s single-arg
+   * signature).
+   */
+  ticker: string;
   rule: string; // the active profile's lossRule.name — "superficial-loss" | "wash-sale"
   windowDays: number;
   priorCandidateId: string;

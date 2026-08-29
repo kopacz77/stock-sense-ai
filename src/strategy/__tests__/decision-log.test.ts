@@ -221,3 +221,102 @@ describe("DecisionLog.findCandidate", () => {
     expect(found).toBeUndefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Plan 11-09 (D-23/D-24): afterTaxRewardUsd / costJurisdiction / costEffectiveTaxRatePct
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("DecisionLog.recordAccept — afterTaxRewardUsd (Plan 11-09)", () => {
+  it("writes a positive afterTaxRewardUsd computed from the OPERATOR's entry/target/size when overrides are supplied", async () => {
+    const configPath = path.join(strategyDataDir, "strategy-config.json");
+    await fs.writeFile(configPath, JSON.stringify({ costs: { marginalRatePct: 40 } }), "utf8");
+    const log = new DecisionLog({ strategyDataDir, configPath });
+
+    const c = candidate({
+      suggestedEntry: 100,
+      suggestedTarget: 110,
+      suggestedStop: 95,
+      suggestedSizeUsd: 500,
+    });
+    // Operator overrides everything — the real config's real config/tax-profiles.json
+    // ON-CA profile (50% inclusion) applies: effectiveTaxRate = 0.40 * 0.50 = 0.20.
+    const record = await log.recordAccept(c, { entry: 100, target: 120, size: 1000 });
+
+    // quantity = floor(1000/100) = 10; grossReward = |120-100|*10 = 200; afterTax = 200*0.8 = 160
+    expect(record.afterTaxRewardUsd).toBeCloseTo(160, 2);
+    expect(record.afterTaxRewardUsd).toBeGreaterThan(0);
+    expect(record.costJurisdiction).toBe("ON-CA");
+    expect(record.costEffectiveTaxRatePct).toBeCloseTo(20, 2);
+  });
+
+  it("computes from the engine's suggestions when no overrides are supplied", async () => {
+    const configPath = path.join(strategyDataDir, "strategy-config.json");
+    await fs.writeFile(configPath, JSON.stringify({ costs: { marginalRatePct: 40 } }), "utf8");
+    const log = new DecisionLog({ strategyDataDir, configPath });
+
+    const c = candidate({
+      suggestedEntry: 100,
+      suggestedTarget: 110,
+      suggestedStop: 95,
+      suggestedSizeUsd: 1000,
+    });
+    const record = await log.recordAccept(c); // no overrides at all
+
+    // quantity = floor(1000/100) = 10; grossReward = |110-100|*10 = 100; afterTax = 100*0.8 = 80
+    expect(record.afterTaxRewardUsd).toBeCloseTo(80, 2);
+    expect(record.operatorEntry).toBe(100);
+    expect(record.operatorTarget).toBe(110);
+  });
+
+  it("writes afterTaxRewardUsd:null when costs.marginalRatePct is null, alongside costJurisdiction set and costEffectiveTaxRatePct null", async () => {
+    // The real config/strategy-config.json ships costs.marginalRatePct: null
+    // by default — no configPath override needed here.
+    const log = new DecisionLog({ strategyDataDir });
+    const c = candidate({
+      suggestedEntry: 100,
+      suggestedTarget: 110,
+      suggestedStop: 95,
+      suggestedSizeUsd: 1000,
+    });
+    const record = await log.recordAccept(c);
+
+    expect(record.afterTaxRewardUsd).toBeNull();
+    expect(record.costJurisdiction).toBe("ON-CA");
+    expect(record.costEffectiveTaxRatePct).toBeNull();
+  });
+});
+
+describe("DecisionLog.recordSkip — cost fields always null (Plan 11-09)", () => {
+  it("writes afterTaxRewardUsd, costJurisdiction, and costEffectiveTaxRatePct all null", async () => {
+    const log = new DecisionLog({ strategyDataDir });
+    const record = await log.recordSkip(candidate());
+    expect(record.afterTaxRewardUsd).toBeNull();
+    expect(record.costJurisdiction).toBeNull();
+    expect(record.costEffectiveTaxRatePct).toBeNull();
+  });
+});
+
+describe("DecisionLog.recordAccept — a cost-config failure never loses the decision (Plan 11-09)", () => {
+  it("a missing tax-profiles file still writes the accept row, with afterTaxRewardUsd:null", async () => {
+    const log = new DecisionLog({
+      strategyDataDir,
+      taxProfilesPath: path.join(strategyDataDir, "does-not-exist.json"),
+    });
+    const c = candidate({
+      suggestedEntry: 100,
+      suggestedTarget: 110,
+      suggestedStop: 95,
+      suggestedSizeUsd: 1000,
+    });
+    const record = await log.recordAccept(c, { entry: 100, target: 110, size: 1000 });
+
+    expect(record.decision).toBe("accept");
+    expect(record.afterTaxRewardUsd).toBeNull();
+    expect(record.costJurisdiction).toBeNull();
+    expect(record.costEffectiveTaxRatePct).toBeNull();
+
+    // The accept was actually persisted, not just returned in-memory.
+    const rows = await log.readDay(new Date());
+    expect(rows.some((r) => r.candidateId === c.candidateId && r.decision === "accept")).toBe(true);
+  });
+});

@@ -1,9 +1,12 @@
 /**
- * After-tax/after-fees net-hurdle cost model tests (M2-05 Plan 11-09, Task 1).
+ * After-tax/after-fees net-hurdle cost model tests (M2-05 Plan 11-09).
  *
- * `describe("wash-sale/superficial-loss flag")` and the decision-log accept
- * cases from Task 2's `<behavior>` block are added in that task's edit to
- * this same file.
+ * Task 1 covers `loadTaxProfiles`/`resolveActiveProfile`/`computeNetHurdle`/
+ * `evaluateCandidateCosts`/`costsDemotionReason`. Task 2's
+ * `describe("wash-sale/superficial-loss flag")` block covers
+ * `findRecentLossClosures`/`buildWashSaleFlag`/`washSaleRationaleNote`
+ * driven by hand-built decision rows, plus one full-engine integration case
+ * proving a flagged candidate is still ranked and still sized.
  */
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -11,17 +14,34 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import type { OHLCVData } from "../../data/types.js";
+import type { TickerDaySummary } from "../../market-intelligence/signal/types.js";
+import { JsonlStore } from "../../market-intelligence/storage/jsonl-store.js";
 import { DEFAULT_STRATEGY_CONFIG } from "../config.js";
 import type { CostsConfig } from "../config.js";
 import {
   TaxProfileError,
+  buildWashSaleFlag,
   computeNetHurdle,
   costsDemotionReason,
   evaluateCandidateCosts,
+  findRecentLossClosures,
   loadTaxProfiles,
   resolveActiveProfile,
+  washSaleRationaleNote,
 } from "../costs.js";
-import type { TaxProfile, TaxProfilesFile } from "../costs.js";
+import type { DecisionRecordLike, TaxProfile, TaxProfilesFile } from "../costs.js";
+import { StrategyEngine } from "../strategy-engine.js";
+import type { MarketDataSource, VixSource } from "../strategy-engine.js";
+import type {
+  RawSignal,
+  SignalContext,
+  SignalMode,
+  SignalType,
+  SignalTypeModule,
+  StrategyDecisionRecord,
+} from "../types.js";
+import type { VixQuote } from "../vix-provider.js";
 
 const REAL_TAX_PROFILES_PATH = path.resolve("./config/tax-profiles.json");
 
@@ -397,5 +417,284 @@ describe("costsDemotionReason", () => {
     expect(reason.endsWith("never silently re-targeted upward, because a wider target is a different trade)")).toBe(
       true,
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Wash-sale / superficial-loss flag (Plan 11-09 Task 2, D-24)
+// ─────────────────────────────────────────────────────────────────────────
+
+function decisionRow(overrides: Partial<DecisionRecordLike> = {}): DecisionRecordLike {
+  return {
+    candidateId: "2026-08-20-SECTOR_ROTATION_FROM_PM-XLE-aaaaaaaa",
+    ticker: "XLE",
+    ...overrides,
+  };
+}
+
+function daysBeforeIso(asOfIso: string, days: number): string {
+  const asOfMs = Date.parse(`${asOfIso}T00:00:00.000Z`);
+  return new Date(asOfMs - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+describe("findRecentLossClosures / buildWashSaleFlag / washSaleRationaleNote", () => {
+  const asOfIso = "2026-08-26";
+
+  it("a loss closed 5 days before the run date flags the ticker naming the rule, prior candidateId, close date, and loss", async () => {
+    const file = await loadTaxProfiles(REAL_TAX_PROFILES_PATH);
+    const rows: DecisionRecordLike[] = [
+      decisionRow({
+        candidateId: "2026-08-21-CATALYST_ANCHORED-XLE-deadbeef",
+        ticker: "XLE",
+        closedAt: daysBeforeIso(asOfIso, 5),
+        closeRealizedPnlUsd: -180,
+      }),
+    ];
+    const closures = findRecentLossClosures(rows, asOfIso, 30);
+    const flag = buildWashSaleFlag("XLE", closures, file.profiles["ON-CA"]);
+
+    expect(flag).not.toBeNull();
+    expect(flag?.rule).toBe("superficial-loss");
+    expect(flag?.priorCandidateId).toBe("2026-08-21-CATALYST_ANCHORED-XLE-deadbeef");
+    expect(flag?.priorRealizedPnlUsd).toBe(-180);
+
+    const note = washSaleRationaleNote(flag as NonNullable<typeof flag>);
+    expect(note.startsWith("(flag: ")).toBe(true);
+    expect(note).toContain("superficial-loss");
+    expect(note).toContain("XLE");
+    expect(note).toContain("180.00");
+    expect(note.endsWith("Informational only — this does not demote the candidate.)")).toBe(true);
+  });
+
+  it("a loss closed 45 days before the run date (outside the 30-day window) produces no flag", () => {
+    const rows: DecisionRecordLike[] = [
+      decisionRow({ ticker: "XLE", closedAt: daysBeforeIso(asOfIso, 45), closeRealizedPnlUsd: -50 }),
+    ];
+    const closures = findRecentLossClosures(rows, asOfIso, 30);
+    expect(closures.has("XLE")).toBe(false);
+  });
+
+  it("a PROFIT closed inside the window produces no flag", () => {
+    const rows: DecisionRecordLike[] = [
+      decisionRow({ ticker: "XLE", closedAt: daysBeforeIso(asOfIso, 5), closeRealizedPnlUsd: 120 }),
+    ];
+    const closures = findRecentLossClosures(rows, asOfIso, 30);
+    expect(closures.has("XLE")).toBe(false);
+  });
+
+  it("a prior loss on a DIFFERENT ticker (XLF) produces no flag on XLE", async () => {
+    const file = await loadTaxProfiles(REAL_TAX_PROFILES_PATH);
+    const rows: DecisionRecordLike[] = [
+      decisionRow({ ticker: "XLF", closedAt: daysBeforeIso(asOfIso, 5), closeRealizedPnlUsd: -75 }),
+    ];
+    const closures = findRecentLossClosures(rows, asOfIso, 30);
+    expect(buildWashSaleFlag("XLE", closures, file.profiles["ON-CA"])).toBeNull();
+  });
+
+  it("the active profile decides the flag's rule name for identical decision-log input: superficial-loss under ON-CA, wash-sale under CA-US", async () => {
+    const file = await loadTaxProfiles(REAL_TAX_PROFILES_PATH);
+    const rows: DecisionRecordLike[] = [
+      decisionRow({ ticker: "XLE", closedAt: daysBeforeIso(asOfIso, 5), closeRealizedPnlUsd: -180 }),
+    ];
+    const closures = findRecentLossClosures(rows, asOfIso, 30);
+    expect(buildWashSaleFlag("XLE", closures, file.profiles["ON-CA"])?.rule).toBe("superficial-loss");
+    expect(buildWashSaleFlag("XLE", closures, file.profiles["CA-US"])?.rule).toBe("wash-sale");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Full-engine integration: a flagged candidate is still ranked and sized
+// ─────────────────────────────────────────────────────────────────────────
+
+let intelDataDir: string;
+let strategyDataDir: string;
+
+beforeEach(async () => {
+  intelDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "costs-engine-intel-"));
+  strategyDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "costs-engine-strategy-"));
+});
+
+afterEach(async () => {
+  await fs.rm(intelDataDir, { recursive: true, force: true });
+  await fs.rm(strategyDataDir, { recursive: true, force: true });
+});
+
+function rollup(overrides: Partial<TickerDaySummary> = {}): TickerDaySummary {
+  return {
+    date: "2026-08-26",
+    ticker: "XLE",
+    weightedSentiment: 0,
+    totalMateriality: 0,
+    articleCount: 0,
+    themes: [],
+    activeCatalystIds: [],
+    pmContribution: { netScore: 0, sources: [] },
+    builtAt: "2026-08-26T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+async function writeRollupFixture(date: string, rows: TickerDaySummary[]): Promise<void> {
+  await fs.writeFile(
+    path.join(intelDataDir, `ticker-day-summary-${date}.jsonl`),
+    `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`,
+    "utf8",
+  );
+}
+
+function stubBars(asOfDate: Date, days = 120): OHLCVData[] {
+  const bars: OHLCVData[] = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date(asOfDate.getTime() - (days - 1 - i) * 24 * 60 * 60 * 1000);
+    const close = 91 + i * 0.05;
+    bars.push({
+      date: d.toISOString().split("T")[0] ?? "",
+      open: close - 0.2,
+      high: close + 1.0,
+      low: close - 1.0,
+      close,
+      volume: 1_000_000,
+    });
+  }
+  return bars.reverse();
+}
+
+class StubMarketData implements MarketDataSource {
+  async fetchHistoricalData(
+    _symbol: string,
+    _from: Date,
+    to: Date = new Date(),
+  ): Promise<OHLCVData[]> {
+    return stubBars(to);
+  }
+}
+
+class StubVixProvider implements VixSource {
+  async getForDate(date: Date): Promise<VixQuote> {
+    return {
+      date: date.toISOString().split("T")[0] ?? "",
+      close: 18,
+      regime: "elevated",
+      source: "live",
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+}
+
+function makeRaw(
+  overrides: Partial<RawSignal> & Pick<RawSignal, "signalType" | "ticker" | "score" | "direction">,
+): RawSignal {
+  return {
+    rationale: "stub rationale",
+    entryStyle: "close",
+    targetSpec: { kind: "atr", period: 5, multiple: 2 },
+    timeHorizonDays: 5,
+    sourceArticleIds: [],
+    sourcePmMarkets: [],
+    ...overrides,
+  };
+}
+
+function makeModule(opts: { signalType: SignalType; mode: SignalMode; signals: RawSignal[] }): SignalTypeModule {
+  return {
+    signalType: opts.signalType,
+    mode: opts.mode,
+    async generate(_ctx: SignalContext): Promise<RawSignal[]> {
+      return opts.signals;
+    },
+  };
+}
+
+describe("StrategyEngine — wash-sale flag integration (Plan 11-09 Task 2)", () => {
+  it("a candidate whose ticker was closed at a loss 5 days ago is flagged, still RANKED, and still SIZED", async () => {
+    const asOfDate = new Date("2026-08-26T00:00:00.000Z");
+    await writeRollupFixture("2026-08-26", [rollup({ ticker: "XLE" })]);
+
+    // Pre-populate the decision log with a closed-at-a-loss XLE row 5 days
+    // before the run date, filed under its own closedAt day — via the same
+    // JsonlStore("decisions") DecisionLog itself writes to, so this fixture
+    // is indistinguishable from a real prior close.
+    const decisionStore = new JsonlStore<StrategyDecisionRecord>(strategyDataDir, "decisions");
+    const priorCandidateId = "2026-08-21-CATALYST_ANCHORED-XLE-deadbeef";
+    const closedAt = daysBeforeIso("2026-08-26", 5);
+    await decisionStore.appendManyOn(
+      [
+        {
+          candidateId: priorCandidateId,
+          ticker: "XLE",
+          signalType: "CATALYST_ANCHORED",
+          score: 0.5,
+          direction: "long",
+          rationale: "prior fixture",
+          entryStyle: "close",
+          targetSpec: { kind: "atr", period: 5, multiple: 2 },
+          timeHorizonDays: 5,
+          sourceArticleIds: [],
+          sourcePmMarkets: [],
+          generatedAt: closedAt,
+          asOfDate: "2026-08-21",
+          mode: "ranked",
+          vixRegime: "elevated",
+          vixCloseAtGeneration: 18,
+          vixSource: "live",
+          suggestedEntry: 100,
+          suggestedTarget: 110,
+          suggestedStop: 95,
+          suggestedSizeUsd: 1000,
+          atrPeriodUsed: 5,
+          atrValue: 2,
+          costEvaluation: null,
+          decision: "accept",
+          decidedAt: closedAt,
+          operatorEntry: 100,
+          operatorTarget: 110,
+          operatorStop: 95,
+          operatorSizeUsd: 1000,
+          afterTaxRewardUsd: null,
+          costJurisdiction: null,
+          costEffectiveTaxRatePct: null,
+          closedAt,
+          closeExitPrice: 82,
+          closeRealizedPnlUsd: -180,
+          closeRealizedPnlPct: -18,
+        },
+      ],
+      new Date(closedAt),
+    );
+
+    const modules = [
+      makeModule({
+        signalType: "CATALYST_ANCHORED",
+        mode: "core",
+        signals: [makeRaw({ signalType: "CATALYST_ANCHORED", ticker: "XLE", score: 0.7, direction: "long" })],
+      }),
+    ];
+
+    const engine = new StrategyEngine({
+      intelDataDir,
+      strategyDataDir,
+      modules,
+      config: {
+        ...DEFAULT_STRATEGY_CONFIG,
+        costs: {
+          ...DEFAULT_STRATEGY_CONFIG.costs,
+          spreadSlippageBps: 0,
+          fxSpreadBps: 0,
+          minRewardRisk: 0.01, // isolate the flag behavior from the (unrelated) reward:risk gate
+        },
+      },
+      vixProvider: new StubVixProvider(),
+      marketData: new StubMarketData(),
+    });
+
+    const result = await engine.generateCandidates(asOfDate);
+
+    const ranked = result.ranked.find((c) => c.ticker === "XLE");
+    expect(ranked).toBeDefined();
+    expect(ranked?.suggestedSizeUsd).not.toBeNull();
+    expect(ranked?.costEvaluation?.washSaleFlag).not.toBeNull();
+    expect(ranked?.costEvaluation?.washSaleFlag?.rule).toBe("superficial-loss");
+    expect(ranked?.costEvaluation?.washSaleFlag?.priorCandidateId).toBe(priorCandidateId);
+    expect(ranked?.rationale).toContain("(flag: superficial-loss");
   });
 });

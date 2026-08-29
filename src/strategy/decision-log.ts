@@ -11,6 +11,10 @@
  */
 
 import { JsonlStore } from "../market-intelligence/storage/jsonl-store.js";
+import { loadStrategyConfig } from "./config.js";
+import type { StrategyConfig } from "./config.js";
+import { computeNetHurdle, loadTaxProfiles, resolveActiveProfile } from "./costs.js";
+import type { TaxProfile } from "./costs.js";
 import { round2 } from "./levels.js";
 import type { StrategyCandidate, StrategyDecisionRecord } from "./types.js";
 
@@ -37,6 +41,10 @@ export interface CloseOutcome {
 
 export interface DecisionLogOptions {
   strategyDataDir?: string;
+  /** Plan 11-09: overrides `loadStrategyConfig`'s default path — mainly for tests. */
+  configPath?: string;
+  /** Plan 11-09: overrides `config.costs.taxProfilesPath` — mainly for tests. */
+  taxProfilesPath?: string;
 }
 
 /** `{ accepted, skipped, total, acceptRate, band }` — D-13's 30-day accept-rate report. */
@@ -54,13 +62,35 @@ const DECISION_LOOKUP_FALLBACK_DAYS = 90;
 
 export class DecisionLog {
   private readonly strategyDataDir: string;
+  private readonly configPath: string | undefined;
+  private readonly taxProfilesPathOverride: string | undefined;
   private readonly store: JsonlStore<StrategyDecisionRecord>;
   private readonly candidateStore: JsonlStore<StrategyCandidate>;
+  /** Plan 11-09: memoised so config + tax-profiles I/O happens at most once per `DecisionLog` instance. */
+  private costModelPromise:
+    | Promise<{ config: StrategyConfig; activeProfile: TaxProfile }>
+    | undefined;
 
   constructor(options: DecisionLogOptions = {}) {
     this.strategyDataDir = options.strategyDataDir ?? "./data/strategy";
+    this.configPath = options.configPath;
+    this.taxProfilesPathOverride = options.taxProfilesPath;
     this.store = new JsonlStore<StrategyDecisionRecord>(this.strategyDataDir, "decisions");
     this.candidateStore = new JsonlStore<StrategyCandidate>(this.strategyDataDir, "candidates");
+  }
+
+  private loadCostModel(): Promise<{ config: StrategyConfig; activeProfile: TaxProfile }> {
+    if (!this.costModelPromise) {
+      this.costModelPromise = (async () => {
+        const config = await loadStrategyConfig(this.configPath);
+        const taxProfilesFile = await loadTaxProfiles(
+          this.taxProfilesPathOverride ?? config.costs.taxProfilesPath,
+        );
+        const activeProfile = resolveActiveProfile(taxProfilesFile, config.costs);
+        return { config, activeProfile };
+      })();
+    }
+    return this.costModelPromise;
   }
 
   /**
@@ -75,21 +105,59 @@ export class DecisionLog {
     note?: string,
   ): Promise<StrategyDecisionRecord> {
     const decidedAt = new Date().toISOString();
+    const operatorEntry = overrides.entry ?? candidate.suggestedEntry;
+    const operatorTarget = overrides.target ?? candidate.suggestedTarget;
+    const operatorSizeUsd = overrides.size ?? candidate.suggestedSizeUsd;
+
+    // Plan 11-09 (D-23/D-24): computed from the OPERATOR's own entry/
+    // target/size (D-09/D-12), exactly as recordClose computes P&L —
+    // never the engine's suggestion. Wrapped end-to-end so a config/
+    // tax-profiles failure, or an invalid entry/size, degrades to nulls
+    // rather than losing the operator's accept.
+    let afterTaxRewardUsd: number | null = null;
+    let costJurisdiction: StrategyDecisionRecord["costJurisdiction"] = null;
+    let costEffectiveTaxRatePct: number | null = null;
+    try {
+      const { config, activeProfile } = await this.loadCostModel();
+      const hurdle = computeNetHurdle(config.costs, activeProfile, operatorSizeUsd ?? 0);
+      costJurisdiction = hurdle.jurisdiction;
+      costEffectiveTaxRatePct = hurdle.taxRateKnown ? hurdle.effectiveTaxRatePct : null;
+
+      // Only write a dollar figure when the tax rate is actually KNOWN —
+      // with marginalRatePct unset, hurdle.effectiveTaxRate is 0 and a
+      // multiplied-through "reward" would read as a real after-tax number
+      // next to a null costEffectiveTaxRatePct; null-pairing both fields is
+      // the honest signal that the engine never guessed a bracket here.
+      if (
+        hurdle.taxRateKnown &&
+        operatorEntry > 0 &&
+        operatorSizeUsd !== null &&
+        operatorSizeUsd > 0
+      ) {
+        const quantity = Math.floor(operatorSizeUsd / operatorEntry);
+        afterTaxRewardUsd = round2(
+          Math.abs(operatorTarget - operatorEntry) * quantity * (1 - hurdle.effectiveTaxRate),
+        );
+      }
+    } catch {
+      // Config/tax-profiles load failed — an operator's accept is never
+      // lost to a cost-config problem; leave everything at null.
+      afterTaxRewardUsd = null;
+      costJurisdiction = null;
+      costEffectiveTaxRatePct = null;
+    }
+
     const record: StrategyDecisionRecord = {
       ...candidate,
       decision: "accept",
       decidedAt,
-      operatorEntry: overrides.entry ?? candidate.suggestedEntry,
-      operatorTarget: overrides.target ?? candidate.suggestedTarget,
+      operatorEntry,
+      operatorTarget,
       operatorStop: overrides.stop ?? candidate.suggestedStop,
-      operatorSizeUsd: overrides.size ?? candidate.suggestedSizeUsd,
-      // Plan 11-09 Task 2 computes these for real from the operator's own
-      // levels; Plan 11-09 Task 1 lands the null-safe placeholder shape
-      // here so the type change to StrategyDecisionRecord compiles cleanly
-      // ahead of Task 2's real implementation.
-      afterTaxRewardUsd: null,
-      costJurisdiction: null,
-      costEffectiveTaxRatePct: null,
+      operatorSizeUsd,
+      afterTaxRewardUsd,
+      costJurisdiction,
+      costEffectiveTaxRatePct,
       ...(note !== undefined ? { operatorNote: note } : {}),
     };
     await this.store.appendManyOn([record], new Date(decidedAt));

@@ -465,3 +465,97 @@ export function costsDemotionReason(evaluation: CandidateCostEvaluation): string
   }
   return `(demoted: costs — ${parts.join("; ")}; never silently re-targeted upward, because a wider target is a different trade)`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Wash-sale / superficial-loss flag (Plan 11-09 Task 2, D-24)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The subset of a `StrategyDecisionRecord` this file needs — never imports `StrategyCandidate`/`StrategyDecisionRecord` from `types.ts`. */
+export interface DecisionRecordLike {
+  candidateId: string;
+  ticker: string;
+  closedAt?: string;
+  closeRealizedPnlUsd?: number;
+}
+
+export interface LossClosure {
+  ticker: string;
+  priorCandidateId: string;
+  priorClosedAt: string; // ISO 8601
+  priorRealizedPnlUsd: number;
+}
+
+/**
+ * Given already-read decision-log rows, keep only closed positions realized
+ * at a LOSS within `windowDays` calendar days ending at `asOfIso` inclusive,
+ * and return the most recent such closure per (upper-cased) ticker. Pure —
+ * the caller reads the decision log ONCE per `generateCandidates` run and
+ * shares this map across every candidate (T-11-09-05); this function itself
+ * performs no I/O.
+ */
+export function findRecentLossClosures(
+  records: DecisionRecordLike[],
+  asOfIso: string,
+  windowDays: number,
+): Map<string, LossClosure> {
+  const asOfMs = Date.parse(`${asOfIso}T00:00:00.000Z`);
+  const windowStartMs = asOfMs - windowDays * 24 * 60 * 60 * 1000;
+  const byTicker = new Map<string, LossClosure>();
+
+  for (const record of records) {
+    if (!record.closedAt) continue;
+    if (record.closeRealizedPnlUsd === undefined || record.closeRealizedPnlUsd >= 0) continue;
+    const closedMs = Date.parse(record.closedAt);
+    if (Number.isNaN(closedMs) || closedMs < windowStartMs || closedMs > asOfMs) continue;
+
+    const ticker = record.ticker.toUpperCase();
+    const existing = byTicker.get(ticker);
+    if (!existing || closedMs > Date.parse(existing.priorClosedAt)) {
+      byTicker.set(ticker, {
+        ticker,
+        priorCandidateId: record.candidateId,
+        priorClosedAt: record.closedAt,
+        priorRealizedPnlUsd: record.closeRealizedPnlUsd,
+      });
+    }
+  }
+
+  return byTicker;
+}
+
+/**
+ * `null` when `ticker` has no recent loss closure; otherwise a `WashSaleFlag`
+ * whose `rule`/`windowDays` come from the ACTIVE profile's `lossRule` — the
+ * same decision-log history therefore produces `superficial-loss` under
+ * ON-CA and `wash-sale` under CA-US without a second code path.
+ */
+export function buildWashSaleFlag(
+  ticker: string,
+  lossClosures: Map<string, LossClosure>,
+  profile: TaxProfile,
+): WashSaleFlag | null {
+  const closure = lossClosures.get(ticker.toUpperCase());
+  if (!closure) return null;
+  return {
+    ticker: closure.ticker,
+    rule: profile.lossRule.name,
+    windowDays: profile.lossRule.windowDays,
+    priorCandidateId: closure.priorCandidateId,
+    priorClosedAt: closure.priorClosedAt,
+    priorRealizedPnlUsd: closure.priorRealizedPnlUsd,
+  };
+}
+
+/**
+ * Rationale suffix for a flagged (never demoted) candidate. Nothing in this
+ * path may call `costsDemotionReason` or move a candidate out of `rankable`
+ * — the flag is informational only.
+ */
+export function washSaleRationaleNote(flag: WashSaleFlag): string {
+  const lossAbs = Math.abs(flag.priorRealizedPnlUsd).toFixed(2);
+  const closedDateOnly = flag.priorClosedAt.split("T")[0] ?? flag.priorClosedAt;
+  return (
+    `(flag: ${flag.rule} — ${flag.ticker} closed at a loss of $${lossAbs} on ${closedDateOnly}, ` +
+    `within the ${flag.windowDays}-day window. Informational only — this does not demote the candidate.)`
+  );
+}

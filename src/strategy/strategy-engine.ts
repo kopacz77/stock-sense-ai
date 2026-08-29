@@ -47,12 +47,17 @@ import { JsonlStore } from "../market-intelligence/storage/jsonl-store.js";
 import type { StrategyConfig } from "./config.js";
 import { loadStrategyConfig } from "./config.js";
 import {
+  buildWashSaleFlag,
   computeNetHurdle,
   costsDemotionReason,
   evaluateCandidateCosts,
+  findRecentLossClosures,
   loadTaxProfiles,
   resolveActiveProfile,
+  washSaleRationaleNote,
 } from "./costs.js";
+import type { LossClosure } from "./costs.js";
+import { DecisionLog } from "./decision-log.js";
 import { computeLevels } from "./levels.js";
 import { defaultSignalModules } from "./signals/index.js";
 import { suggestSizeUsd } from "./sizing.js";
@@ -387,7 +392,13 @@ export class StrategyEngine {
 
         return {
           ...raw,
-          candidateId: buildCandidateId(asOfIso, raw.signalType, raw.ticker, raw.score, generatedAt),
+          candidateId: buildCandidateId(
+            asOfIso,
+            raw.signalType,
+            raw.ticker,
+            raw.score,
+            generatedAt,
+          ),
           generatedAt,
           asOfDate: asOfIso,
           mode: "sub-threshold" as CandidateMode, // reassigned below during partition
@@ -410,6 +421,29 @@ export class StrategyEngine {
     // than silently producing candidates ranked without a hurdle.
     const taxProfilesFile = await loadTaxProfiles(config.costs.taxProfilesPath);
     const activeProfile = resolveActiveProfile(taxProfilesFile, config.costs);
+
+    // Plan 11-09 (D-24, T-11-09-05): read the decision log ONCE per run —
+    // never per candidate, which would issue thirty file reads for every
+    // candidate on the board — over the active profile's own loss-rule
+    // window, and share the resulting map across every candidate below. A
+    // missing decision directory (first-ever run) degrades to an empty map
+    // rather than failing the run.
+    let lossClosures = new Map<string, LossClosure>();
+    try {
+      const lossWindowStart = new Date(
+        asOfDate.getTime() - activeProfile.lossRule.windowDays * 24 * 60 * 60 * 1000,
+      );
+      const lossWindowStartIso = lossWindowStart.toISOString().split("T")[0] ?? asOfIso;
+      const decisionLog = new DecisionLog({ strategyDataDir: this.strategyDataDir });
+      const decisionRows = await decisionLog.readDedupedByCandidateId(lossWindowStartIso, asOfIso);
+      lossClosures = findRecentLossClosures(
+        decisionRows,
+        asOfIso,
+        activeProfile.lossRule.windowDays,
+      );
+    } catch {
+      lossClosures = new Map();
+    }
 
     // Shadow-mode modules' candidates bypass ranking structurally — a
     // shadow candidate never competes for a ranked/sub-threshold slot no
@@ -460,7 +494,7 @@ export class StrategyEngine {
         candidate.sizeModifier ?? 1,
       );
       const hurdle = computeNetHurdle(config.costs, activeProfile, prospectiveSizeUsd);
-      const costEvaluation = evaluateCandidateCosts({
+      const rawCostEvaluation = evaluateCandidateCosts({
         entry: candidate.suggestedEntry,
         target: candidate.suggestedTarget,
         stop: candidate.suggestedStop,
@@ -469,18 +503,36 @@ export class StrategyEngine {
         hurdle,
       });
 
+      // Plan 11-09 (D-24): a candidate whose ticker was closed at a loss
+      // within the active profile's trailing loss-rule window is flagged —
+      // informational only, never a demotion path. Every candidate that
+      // reaches a cost evaluation (ranked-eligible and cost-demoted alike)
+      // gets the same lookup against the ONE shared map built above.
+      const washSaleFlag = buildWashSaleFlag(candidate.ticker, lossClosures, activeProfile);
+      const costEvaluation = washSaleFlag
+        ? { ...rawCostEvaluation, washSaleFlag }
+        : rawCostEvaluation;
+
       if (!costEvaluation.passes) {
+        const rationaleParts = [candidate.rationale, costsDemotionReason(costEvaluation)];
+        if (washSaleFlag) rationaleParts.push(washSaleRationaleNote(washSaleFlag));
         costFailed.push({
           ...candidate,
           mode: "sub-threshold" as CandidateMode,
           suggestedSizeUsd: null,
           costEvaluation,
-          rationale: `${candidate.rationale} ${costsDemotionReason(costEvaluation)}`,
+          rationale: rationaleParts.join(" "),
         });
         continue;
       }
 
-      rankable.push({ ...candidate, costEvaluation });
+      rankable.push({
+        ...candidate,
+        costEvaluation,
+        rationale: washSaleFlag
+          ? `${candidate.rationale} ${washSaleRationaleNote(washSaleFlag)}`
+          : candidate.rationale,
+      });
     }
 
     const deduped = resolveTickerCollisions(rankable);
