@@ -366,3 +366,10 @@ None — no external service configuration. Zero new packages (verified: `git di
 ---
 *Phase: 11-ai-strategy*
 *Completed: 2026-08-29*
+
+## Self-Check: PASSED
+
+All key created files (`config/tax-profiles.json`, `src/strategy/costs.ts`,
+`src/strategy/__tests__/costs.test.ts`, this SUMMARY) verified present on
+disk; all 4 commit hashes (`4d1523b`, `42bc1de`, `21d3eab`, `d156b6a`)
+verified present in `git log --oneline --all`.
