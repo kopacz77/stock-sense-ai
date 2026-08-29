@@ -75,6 +75,11 @@ export async function ensureServerUp(
   throw new Error(`LM Studio server did not answer at ${endpoint} within ${waitMs / 1000}s`);
 }
 
+/** Unload every loaded model (frees VRAM/RAM) but leave the server running. */
+export async function unloadAllModels(bin: string): Promise<string> {
+  return lms(bin, ["unload", "--all"]);
+}
+
 /** Unload every model (frees RAM) and stop the server. Best-effort. */
 export async function shutdownServer(bin: string): Promise<string[]> {
   const log: string[] = [];

@@ -27,6 +27,7 @@ import {
 } from "../signal/catalyst-loader.js";
 import { ScoreBacklog } from "../signal/score-backlog.js";
 import { isDrainLocked, persistDrainedRecords } from "../signal/backlog-drain.js";
+import { type LlmGuardOptions, isWithinQuietHours, unloadLocalModels } from "./llm-guard.js";
 import { rebuildRollupForDay } from "../signal/rollup-backfill.js";
 import { PmMappingEngine } from "../signal/pm-mapping-engine.js";
 import { CatalystRefiner } from "../signal/catalyst-refiner.js";
@@ -103,6 +104,11 @@ export interface CycleOptions {
   macroTickers?: string[];
   /** Skip the rollup build step (for tests or rule-based-only cycles). Default false. */
   skipRollup?: boolean;
+  /**
+   * Keep the local model out of VRAM when idle (unload after each cycle that
+   * used it) and/or make no LLM calls during quiet hours. See llm-guard.ts.
+   */
+  llmGuard?: LlmGuardOptions;
 }
 
 export interface CycleResult {
@@ -194,13 +200,23 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
   let llmUsedUsd = 0;
   let correlator: "llm" | "rule-based";
 
-  const remoteCapHit = options.llm?.provider === "remote" && usedToday >= dailyCap;
-  if (options.llm && !remoteCapHit) {
+  // LLM quiet hours: inside the window we make NO LLM calls at all — the
+  // correlator uses rules and fresh articles are queued for the daytime drain.
+  const quietNow = isWithinQuietHours(new Date(), options.llmGuard?.quietHours ?? null);
+  if (quietNow && options.llm) {
+    console.warn(
+      `[cycle-runner] LLM quiet hours (${options.llmGuard?.quietHours?.label}): skipping correlator + scorer this cycle`,
+    );
+  }
+  const llmActive = quietNow ? undefined : options.llm;
+
+  const remoteCapHit = llmActive?.provider === "remote" && usedToday >= dailyCap;
+  if (llmActive && !remoteCapHit) {
     try {
       const llm = new LlmCorrelator({
-        endpoint: options.llm.endpoint,
-        model: options.llm.model,
-        apiKey: options.llm.apiKey,
+        endpoint: llmActive.endpoint,
+        model: llmActive.model,
+        apiKey: llmActive.apiKey,
         minMovePp,
       });
       const result = await llm.correlate(markets, articles);
@@ -247,12 +263,12 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
   };
   if (options.llm) {
     try {
-      scoringResult = await runArticleScoring(articles, options, dataDir);
+      scoringResult = await runArticleScoring(articles, options, dataDir, quietNow);
       // Loud, greppable signal for the failure mode that went unnoticed for a
       // month (2026-07-26 → 08-27): LM Studio down, every article backlogged,
       // digests still flowing. The digest's scorer-health line is the
       // operator-facing counterpart.
-      if (scoringResult.scored.length === 0 && scoringResult.backlogged > 0) {
+      if (!quietNow && scoringResult.scored.length === 0 && scoringResult.backlogged > 0) {
         console.warn(
           `[cycle-runner] SCORER DOWN: 0 scored, ${scoringResult.backlogged} backlogged this cycle ` +
             `(backlog=${scoringResult.backlogSize}). Is LM Studio running at ${options.llm.endpoint}?`,
@@ -372,6 +388,16 @@ export async function runCycle(options: CycleOptions): Promise<CycleResult> {
     }
   }
 
+  // ── 5. LLM guard: never leave the local model resident while idle.
+  const llmUsedThisCycle = correlator === "llm" || scoringResult.scored.length > 0;
+  if (
+    llmUsedThisCycle &&
+    options.llm?.provider === "local" &&
+    options.llmGuard?.unloadAfterCycle
+  ) {
+    console.warn(`[cycle-runner] llm-guard: ${await unloadLocalModels()}`);
+  }
+
   return {
     articles: articles.length,
     rawMarkets: rawMarkets.length,
@@ -468,6 +494,7 @@ async function runArticleScoring(
   articles: NewsArticle[],
   options: CycleOptions,
   dataDir: string,
+  quietNow = false,
 ): Promise<{
   scored: ScoredArticle[];
   backlogged: number;
@@ -519,6 +546,23 @@ async function runArticleScoring(
   const upcomingEvents = await loadUpcomingEvents(dataDir, 14);
   const macroTickers = options.macroTickers ?? [];
   const tickerUniverse = Array.from(new Set([...options.watchlist, ...macroTickers]));
+
+  // Quiet hours: no LLM calls. Queue the (pre-screen-ranked) fresh articles
+  // for the daytime drain so nothing is lost, and skip the drain itself.
+  if (quietNow) {
+    let queued = 0;
+    for (const article of newArticles.slice(0, cap)) {
+      await backlog.enqueue(article, [], "quiet-hours");
+      queued += 1;
+    }
+    return {
+      scored: [],
+      backlogged: queued,
+      backlogSize: await backlog.size(),
+      prescreenTop: 0,
+      prescreenCut: 0,
+    };
+  }
 
   const baseContext: ScoringContext = {
     canonicalThemes,

@@ -60,3 +60,31 @@ TTL), plus optionally a WSL `systemd --user` timer that pings `/v1/models`
 and re-runs the same command via interop (verified working from a systemd
 unit). A remote OpenAI-compatible API (e.g. DeepSeek) removes the problem
 entirely — see STATE.md for the current thinking.
+
+## RDNA4 / Adrenalin VRAM-eviction crash (2026-08-28) — why the model must never sit idle in VRAM
+
+The operator's RX 9060 XT on Adrenalin 26.5.1–26.8.1 hits llama.cpp #23443:
+after inference the driver evicts VRAM to system RAM (fully when Windows
+turns the displays off) and the machine hard-crashes (`VIDEO_TDR_FAILURE`
+0x116 / 0x7E, `amdkmdag.sys`). Every crash on record coincided with LM Studio
+holding `qwen3-14b` resident while this scheduler kept calling it overnight;
+LM Studio's 1 h idle TTL is far too long. Rolling back to 26.7.1 does not help
+(it is inside the affected range); 26.3.1 is the last build users report clean.
+
+**Scheduler-side guard (`src/market-intelligence/scheduler/llm-guard.ts`),
+set in `.env`:**
+
+- `LLM_UNLOAD_AFTER_CYCLE=true` (default) — after any cycle that used the
+  LLM, run `lms unload --all` so nothing is resident while idle. The next
+  cycle JIT-reloads (~30–60 s). Logged as `[cycle-runner] llm-guard: unloaded`.
+- `LLM_QUIET_HOURS_ET=22:00-07:00` — inside the window the cycle makes **no**
+  LLM calls: correlator falls back to rules, fresh articles are queued to the
+  score backlog (reason `quiet-hours`) and drained during the day. Logged as
+  `[cycle-runner] LLM quiet hours (...): skipping correlator + scorer`.
+
+**Durable fixes (operator side):** run the model on LM Studio's CPU backend
+(5800X / 64 GB handles Qwen3-14B Q4 at a few tok/s — fine for scoring), or
+move scoring to a remote OpenAI-compatible API (DeepSeek) so the GPU is out
+of the loop. Do not test sleep/hibernate until one of those is in place.
+Reported useless for this bug: TDR delay, `DisableGpuMemoryTrim`,
+`KMD_EnableContextBasedPowerManagement`, PCIe ASPM, dummy HDMI plugs.

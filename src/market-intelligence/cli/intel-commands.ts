@@ -24,6 +24,7 @@ import { backfillMissingRollups } from "../signal/rollup-backfill.js";
 import { drainBacklog, releaseDrainLock } from "../signal/backlog-drain.js";
 import { ScoreBacklog } from "../signal/score-backlog.js";
 import { endpointUp, ensureServerUp, findLms, shutdownServer } from "./lm-studio-control.js";
+import { resolveLlmGuardFromEnv } from "../scheduler/llm-guard.js";
 import {
   evaluatePrescreen,
   extractFeedId,
@@ -509,9 +510,18 @@ export function registerIntelCommands(program: Command): void {
       const useLlm = opts.llm !== false;
       const llmCfg = useLlm ? resolveLlmConfig() : null;
 
+      const llmGuard = resolveLlmGuardFromEnv();
+      if (llmCfg) {
+        console.log(
+          chalk.gray(
+            `LLM guard: quiet hours ${llmGuard.quietHours?.label ?? "off"}; unload after cycle ${llmGuard.unloadAfterCycle ? "on" : "off"}`,
+          ),
+        );
+      }
       const scheduler = new IntelScheduler({
         finnhubApiKey: finnhubKey,
         llm: llmCfg ?? undefined,
+        llmGuard,
         watchlist,
         minMovePp: Number(opts.minMove ?? 3),
         dailyCapUsd: Number(opts.dailyCap ?? 5),
@@ -590,6 +600,7 @@ export function registerIntelCommands(program: Command): void {
         const result = await runCycle({
           finnhubApiKey: apiKey,
           llm: llmCfg ?? undefined,
+          llmGuard: resolveLlmGuardFromEnv(),
           watchlist,
           minMovePp: minMove,
           dailyCapUsd: Number(opts.dailyCap ?? 5),
