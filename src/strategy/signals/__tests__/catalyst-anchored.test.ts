@@ -298,7 +298,7 @@ describe("CatalystAnchoredModule.generate", () => {
       expect(signals[0]?.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 1 });
     });
 
-    it("every other type (including product/lawsuit/ma/earnings) uses { kind: atr, period: 5, multiple: 2 }", async () => {
+    it("every other type (including product/lawsuit/ma/earnings) uses { kind: atr, period: 5, multiple: 3 }", async () => {
       await stageCatalysts("2026-06-25", [
         makeCatalyst({ id: "p", type: "product", tickers: ["NVDA"] }),
         makeCatalyst({ id: "l", type: "lawsuit", tickers: ["META"] }),
@@ -310,7 +310,7 @@ describe("CatalystAnchoredModule.generate", () => {
       const signals = await module.generate(makeContext());
       expect(signals.length).toBeGreaterThan(0);
       for (const s of signals) {
-        expect(s.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 2 });
+        expect(s.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 3 });
       }
     });
   });
@@ -370,7 +370,7 @@ describe("scheduled-macro population (D-17)", () => {
     }
   });
 
-  it("a CPI flag (calendar:fred-shaped) takes the generic 2x ATR_5 target path", async () => {
+  it("a CPI flag (calendar:fred-shaped) takes the generic 3x ATR_5 target path", async () => {
     // The real FredCalendarFetcher emits CPI/NFP/PCE/GDP/retail_sales/jolts
     // with EMPTY tickers[] AND affectedSectors[] (verified against real
     // data/intel this session — see SUMMARY "corpus disagreements"). A
@@ -395,10 +395,10 @@ describe("scheduled-macro population (D-17)", () => {
     const module = new CatalystAnchoredModule();
     const signals = await module.generate(makeContext());
     expect(signals).toHaveLength(1);
-    expect(signals[0]?.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 2 });
+    expect(signals[0]?.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 3 });
   });
 
-  it("an NFP flag (calendar:fred-shaped) takes the generic 2x ATR_5 target path", async () => {
+  it("an NFP flag (calendar:fred-shaped) takes the generic 3x ATR_5 target path", async () => {
     await stageCatalysts("2026-06-25", [
       makeCatalyst({
         id: "nfp-2026-07-03",
@@ -416,7 +416,7 @@ describe("scheduled-macro population (D-17)", () => {
     const module = new CatalystAnchoredModule();
     const signals = await module.generate(makeContext());
     expect(signals).toHaveLength(1);
-    expect(signals[0]?.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 2 });
+    expect(signals[0]?.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 3 });
   });
 });
 
@@ -424,7 +424,7 @@ describe("LLM-emergent population (D-17 — 71% of the real corpus)", () => {
   const emergentTypes: Array<CatalystFlag["type"]> = ["product", "lawsuit", "ma", "guidance"];
 
   it.each(emergentTypes)(
-    "a single-ticker %s catalyst (source: article:...) takes the generic 2x ATR_5 target path",
+    "a single-ticker %s catalyst (source: article:...) takes the generic 3x ATR_5 target path",
     async (type) => {
       await stageCatalysts("2026-06-25", [
         makeCatalyst({
@@ -440,7 +440,7 @@ describe("LLM-emergent population (D-17 — 71% of the real corpus)", () => {
       const module = new CatalystAnchoredModule();
       const signals = await module.generate(makeContext());
       expect(signals).toHaveLength(1);
-      expect(signals[0]?.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 2 });
+      expect(signals[0]?.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 3 });
       expect(signals[0]?.rationale).toContain("emerging");
     },
   );
@@ -464,7 +464,7 @@ describe("LLM-emergent population (D-17 — 71% of the real corpus)", () => {
     expect(signals[0]?.targetSpec).toEqual({ kind: "absoluteMove", move: 12.5 });
   });
 
-  it("an earnings flag with no supplied avgHistoricalMove falls back to the 2x ATR_5 target spec", async () => {
+  it("an earnings flag with no supplied avgHistoricalMove falls back to the 3x ATR_5 target spec", async () => {
     await stageCatalysts("2026-06-25", [
       makeCatalyst({
         id: "earnings-no-move",
@@ -479,7 +479,7 @@ describe("LLM-emergent population (D-17 — 71% of the real corpus)", () => {
     const module = new CatalystAnchoredModule();
     const signals = await module.generate(makeContext());
     expect(signals).toHaveLength(1);
-    expect(signals[0]?.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 2 });
+    expect(signals[0]?.targetSpec).toEqual({ kind: "atr", period: 5, multiple: 3 });
   });
 
   it("a low-confidence emergent flag (magnitude 2, confidence 0.3 -> score 0.12) lands below the 0.4 score floor", async () => {

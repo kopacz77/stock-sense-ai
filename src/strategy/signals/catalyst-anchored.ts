@@ -27,7 +27,7 @@
  *   catalystTickers  = ["TLT","IEF","XLF","IWM"]          // affectedSectors only, tickers[] empty
  *   direction binary -> 2 legs per ticker (long @0.5, short @0.5) = 8 RawSignals
  *   asOfDate = "2026-06-10" -> daysUntil = 7 -> timeHorizonDays = 8
- *   targetSpec       = { kind: "atr", period: 5, multiple: 2 }    // fomc uses the generic default
+ *   targetSpec       = { kind: "atr", period: 5, multiple: 3 }    // fomc uses the generic default (3×ATR_5 since 2026-08-30, D-25)
  *   rationale states "scheduled" (source starts with "calendar:")
  */
 
@@ -70,7 +70,7 @@ export function daysUntil(expectedDate: string, asOfDate: string): number {
  * prefers a supplied average-historical-earnings-move when the catalyst
  * carries one in `sourceMeta.avgHistoricalMove` (no producer populates this
  * today — it is a forward-compatible hook, not a live path — so `earnings`
- * currently always falls back to the generic `2 * ATR_5` in practice).
+ * currently always falls back to the generic `3 * ATR_5` in practice — widened from 2× on 2026-08-30 so the gross R:R (3/1.5 = 2.0) clears the 1.5 net cost hurdle, D-25).
  */
 function targetSpecForCatalyst(catalyst: CatalystFlag): TargetSpec {
   switch (catalyst.type) {
@@ -84,7 +84,7 @@ function targetSpecForCatalyst(catalyst: CatalystFlag): TargetSpec {
       if (typeof avgMove === "number" && Number.isFinite(avgMove)) {
         return { kind: "absoluteMove", move: avgMove };
       }
-      return { kind: "atr", period: 5, multiple: 2 };
+      return { kind: "atr", period: 5, multiple: 3 };
     }
     default:
       // ma, lawsuit, regulatory, product, guidance, geopolitical, other,
@@ -92,7 +92,7 @@ function targetSpecForCatalyst(catalyst: CatalystFlag): TargetSpec {
       // opec, eia_petroleum — the generic default. RESEARCH §0's real
       // distribution shows product/lawsuit/ma dominate the real corpus,
       // not FOMC/FDA, so this default path is the majority case.
-      return { kind: "atr", period: 5, multiple: 2 };
+      return { kind: "atr", period: 5, multiple: 3 };
   }
 }
 

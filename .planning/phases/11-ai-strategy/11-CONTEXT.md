@@ -140,6 +140,9 @@ Turn the M2-04 per-ticker-day rollup + active calendar catalysts + PM-derived si
   - **Currency:** ON-CA residents compute gains in CAD — USD-priced trades carry FX conversion at entry and exit (config `costs.fxSpreadBps` + a note that the gain is measured in CAD); CA-US has no FX leg.
   - **Fees:** per-trade commission (broker-specific; $0 default for Alpaca), regulatory fees on US sells (SEC §31 / FINRA TAF, tiny but real — include as bps-of-notional), spread/slippage bps per side.
   - **What the engine does with all this:** the two-part rule above (fee/slippage break-even on the target; after-tax reward ÷ pre-tax risk ≥ `minRewardRisk`), with the *active* profile's numbers, and a `strategy costs --show` command that prints the active profile and the resulting hurdle so the operator can sanity-check it against their accountant's advice.
+
+### D-25 — CATALYST_ANCHORED generic target widened to 3×ATR_5 (operator decision, 2026-08-30)
+- 11-09's net hurdle showed the locked 2×ATR_5 target ÷ 1.5×ATR_5 stop = 1.33 gross R:R fails the 1.5 net bar before any tax or fee, demoting every catalyst candidate. Operator chose to widen the generic CATALYST_ANCHORED target to **3×ATR_5** (gross R:R 2.0) rather than lower `costs.minRewardRisk`. Earnings flags with a supplied average historical move keep that value; the `MAX_ATR_TARGET_DISTANCE_PCT` (15%) cap still applies. RESEARCH §4's "2*ATR_5" rows are superseded for CATALYST_ANCHORED only; SECTOR_ROTATION_FROM_PM (2×ATR_10) and SENTIMENT_VELOCITY (2.5×ATR_5) unchanged.
 </decisions>
 
 <specifics>
