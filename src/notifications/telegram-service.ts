@@ -33,6 +33,18 @@ export class TelegramService {
   private baseUrl = "https://api.telegram.org";
 
   async sendAlert(alert: TelegramMessage): Promise<boolean> {
+    // Operator mute switch (2026-09-07): suppress ALL outbound Telegram while
+    // the strategy stack is being stood up, without stopping the data
+    // pipeline. Returns true so callers (digest slots, daily caps) behave as
+    // if sent — nothing retries, nothing piles up, and alerts-fired keeps its
+    // record. Unmute: set TELEGRAM_MUTED=false in .env and restart the
+    // stock-sense-intel service.
+    const muted = (process.env.TELEGRAM_MUTED ?? "").trim().toLowerCase();
+    if (muted === "true" || muted === "1" || muted === "yes") {
+      console.warn("[telegram] TELEGRAM_MUTED — notification suppressed (not sent)");
+      return true;
+    }
+
     const telegramConfig = this.config.get("notifications.telegram");
     
     if (!telegramConfig?.botToken || !telegramConfig?.chatId) {
