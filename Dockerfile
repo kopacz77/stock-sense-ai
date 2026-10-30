@@ -8,10 +8,13 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Build Backend
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS backend-builder
+FROM node:26-alpine AS backend-builder
 
-# Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@8.15.0 --activate
+# pnpm 12 as a standalone binary (Node 26 images no longer ship corepack)
+ARG PNPM_VERSION=12.16.1
+RUN case "$(uname -m)" in aarch64) arch=arm64 ;; *) arch=x64 ;; esac \
+    && wget -qO- "https://github.com/pnpm/pnpm/releases/download/v${PNPM_VERSION}/pnpm-linux-${arch}-musl.tar.gz" \
+       | tar -xz -C /usr/local/bin pnpm
 
 WORKDIR /app
 
@@ -31,30 +34,38 @@ RUN pnpm run build
 # -----------------------------------------------------------------------------
 # Stage 2: Build Frontend
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS frontend-builder
+FROM node:26-alpine AS frontend-builder
+
+# pnpm 12 as a standalone binary (Node 26 images no longer ship corepack)
+ARG PNPM_VERSION=12.16.1
+RUN case "$(uname -m)" in aarch64) arch=arm64 ;; *) arch=x64 ;; esac \
+    && wget -qO- "https://github.com/pnpm/pnpm/releases/download/v${PNPM_VERSION}/pnpm-linux-${arch}-musl.tar.gz" \
+       | tar -xz -C /usr/local/bin pnpm
 
 WORKDIR /app/web/frontend
 
 # Copy frontend package files
-COPY web/frontend/package.json ./
-COPY web/frontend/package-lock.json* ./
+COPY web/frontend/package.json web/frontend/pnpm-lock.yaml ./
 
-# Install dependencies with npm
-RUN npm install
+# Install dependencies (esbuild's binary arrives as an optional dependency, so no scripts needed)
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Copy frontend source
 COPY web/frontend/ ./
 
 # Build frontend (outputs to dist/)
-RUN npm run build
+RUN pnpm run build
 
 # -----------------------------------------------------------------------------
 # Stage 3: Production Image
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS production
+FROM node:26-alpine AS production
 
-# Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@8.15.0 --activate
+# pnpm 12 as a standalone binary (Node 26 images no longer ship corepack)
+ARG PNPM_VERSION=12.16.1
+RUN case "$(uname -m)" in aarch64) arch=arm64 ;; *) arch=x64 ;; esac \
+    && wget -qO- "https://github.com/pnpm/pnpm/releases/download/v${PNPM_VERSION}/pnpm-linux-${arch}-musl.tar.gz" \
+       | tar -xz -C /usr/local/bin pnpm
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \

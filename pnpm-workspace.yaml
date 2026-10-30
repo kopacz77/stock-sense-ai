@@ -1,0 +1,7 @@
+# pnpm 11+ reads the install-script allowlist from here. esbuild and keytar
+# fetch native binaries in their postinstall; biome's script is only a check
+# (its binary arrives as an optional dependency).
+allowBuilds:
+  esbuild: true
+  keytar: true
+  '@biomejs/biome': false
