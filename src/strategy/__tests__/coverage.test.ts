@@ -138,11 +138,17 @@ describe("hasTrailingCoverage", () => {
   });
 });
 
+// The real tree is gitignored and keeps growing, so these probes only assert
+// facts that cannot change: the scorer never ran before 2026-06-02, and the June
+// window below was fully scored before this test was written. (The original
+// negative probe targeted the 2026-07-27 -> 08-27 LM Studio outage; `intel
+// backlog-drain` filled that hole on 2026-09-05/06, which is exactly what the
+// gate is for, and the probe went red.)
 describe.skipIf(!existsSync("./data/intel"))("live data probe (real data/intel tree)", () => {
-  it("reports ok: false for 2026-08-15 (inside the 2026-07-27 -> 08-27 outage window)", async () => {
-    const result = await hasTrailingCoverage("./data/intel", "2026-08-15", 3);
+  it("reports ok: false for 2026-05-20 (before any scored-articles file exists)", async () => {
+    const result = await hasTrailingCoverage("./data/intel", "2026-05-20", 3);
     expect(result.ok).toBe(false);
-    expect(result.missingDays.length).toBeGreaterThan(0);
+    expect(result.missingDays).toEqual(["2026-05-17", "2026-05-18", "2026-05-19"]);
   });
 
   it("reports ok: true for 2026-06-25 (a real fully-scored June window)", async () => {
